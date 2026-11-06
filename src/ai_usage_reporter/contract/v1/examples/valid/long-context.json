@@ -1,0 +1,17 @@
+{
+  "schema": "specivo.ai-usage.v1",
+  "client": {"name": "ai-usage-reporter", "version": "1.0.0"},
+  "records": [
+    {
+      "idempotency_key": "4e1c2348ef5d14f51fbe04a295608ac662f582178ee0baf903e69b704b128403",
+      "tool": "gemini-cli",
+      "provider": "google",
+      "model": "gemini-2.5-pro",
+      "session_id": "3b9e7d40-session",
+      "usage_date": "2026-11-05",
+      "request_count": 30,
+      "tokens": {"input": 410000, "output": 52000, "cache_read": 3100000},
+      "long_context_tokens": {"input": 96000, "output": 7500, "cache_read": 1150000}
+    }
+  ]
+}

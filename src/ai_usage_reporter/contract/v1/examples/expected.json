@@ -7,6 +7,9 @@
     "full-record.json": [
       {"status": "created", "method": "explicit", "issue_ref": "ACME-12", "project_key": "ACME"}
     ],
+    "long-context.json": [
+      {"status": "created", "method": "none", "issue_ref": null, "project_key": null}
+    ],
     "attribution-steps.json": [
       {"status": "created", "method": "env", "issue_ref": "ACME-12", "project_key": "ACME"},
       {"status": "created", "method": "commit", "issue_ref": "ACME-3", "project_key": "ACME"},

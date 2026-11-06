@@ -87,7 +87,7 @@
     },
     "tokens": {
       "$ref": "#/$defs/tokens",
-      "description": "Token totals of the bucket. 'input' excludes cache reads and writes."
+      "description": "Token totals of the requests below the long-context threshold. 'input' excludes cache reads and writes. Disjoint from long_context_tokens: the record's usage is the sum of both."
     },
     "long_context_tokens": {
       "anyOf": [
@@ -98,7 +98,7 @@
           "type": "null"
         }
       ],
-      "description": "The part of 'tokens' billed at long-context prices, when the provider has them."
+      "description": "Token totals of the requests that crossed the long-context threshold, billed at long-context prices. Disjoint from 'tokens', not a part of it: each request is counted wholly in one of the two buckets, and the record's usage is the sum of both."
     },
     "reported_cost": {
       "anyOf": [

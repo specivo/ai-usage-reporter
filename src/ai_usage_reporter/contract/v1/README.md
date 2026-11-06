@@ -110,8 +110,8 @@ Only five properties are required. Everything else may be left out or set to `nu
 | `timezone` | no | The person's IANA time zone, e.g. `Asia/Bangkok`. Informational; not stored by v1 servers. |
 | `started_at`, `ended_at` | no | RFC 3339 timestamps with an offset. See [Time](#time). |
 | `request_count` | no | Model requests in the bucket, 0 to 100,000,000. Default 0. |
-| `tokens` | yes | Token totals by class, see below. A missing class is 0. |
-| `long_context_tokens` | no | The part of `tokens` billed at long-context prices, same classes. |
+| `tokens` | yes | Token totals by class of the requests **below** the model's long-context threshold, see below. A missing class is 0. |
+| `long_context_tokens` | no | Token totals by class of the requests that **crossed** the long-context threshold, same classes. Disjoint from `tokens`, see [Long-context tokens](#long-context-tokens). |
 | `reported_cost` | no | What the provider charged: `{"amount": "1.2345", "currency": "USD"}`. The amount is a string with at most 12 integer and 8 fractional digits; the currency must be one the server knows. |
 | `cost_type` | no | `subscription`, `api`, `local`, `free` or `unknown`. See [Costs](#costs). |
 | `subscription_hint` | no | The plan the tool reports, e.g. `claude-max-20x`. Informational; not stored by v1 servers. |
@@ -131,6 +131,31 @@ Only five properties are required. Everything else may be left out or set to `nu
 
 Normalise before sending: some providers count cached tokens inside `input`. Subtract them,
 so that every token is counted in exactly one class.
+
+### Long-context tokens
+
+Some models bill a request at higher prices once its context (input plus cache reads and
+writes) passes a threshold, for example 200,000 tokens. Such a request is billed at the
+long-context prices **as a whole**, not only for the tokens above the threshold.
+
+`tokens` and `long_context_tokens` are therefore **two disjoint buckets**:
+
+- `tokens` holds only the requests below the threshold.
+- `long_context_tokens` holds only the requests that crossed it.
+- A request goes **wholly into one bucket**: all its classes (input, output, cache reads and
+  writes, reasoning) are counted in the same bucket, never split between the two.
+- `long_context_tokens` is **not** a part of `tokens`. Do not count a long-context request in
+  `tokens` as well.
+- The usage of the record is the **sum** of both buckets, class by class: its input is
+  `tokens.input + long_context_tokens.input`, and so on.
+
+The server prices `tokens` at the base prices and `long_context_tokens` at the long-context
+prices, so each token is priced once. Leave `long_context_tokens` out (or `null`) when the
+model has no long-context tier or no request crossed it.
+
+Example: three requests with 50,000, 120,000 and 260,000 tokens of context on a model whose
+threshold is 200,000. The first two go into `tokens`, the third (its input, cache and output
+tokens alike) into `long_context_tokens`.
 
 ## Buckets and upserts
 
@@ -385,13 +410,21 @@ the record was rejected; an unknown warning code means it was stored.
   default (`AI_USAGE_INGEST_RATE_LIMIT_PER_MINUTE`). Wait for `Retry-After` seconds after a
   429.
 - Sanity bounds: at most 10^12 tokens per class, 10^8 requests per record; the string lengths
-  in the schema.
+  in the schema. The bound per class applies to each bucket and to the sum of both
+  (`tokens.<class> + long_context_tokens.<class>`).
 
 ## Compatibility rules
 
 - **Within v1, changes are additive.** New optional properties may appear in records, in the
   batch and in responses. Nothing required is added, nothing is removed, and no meaning
   changes.
+- **Clarifications** within v1 make explicit what the contract always meant and how Specivo
+  has always processed it; they do not change the format. One so far: `tokens` and
+  `long_context_tokens` are disjoint buckets whose sum is the usage (see
+  [Long-context tokens](#long-context-tokens)). Earlier wording called `long_context_tokens`
+  "the part of `tokens`" billed at long-context prices; a server has always priced the two
+  buckets separately, so a reporter that counted long-context requests in both was charged
+  twice for them.
 - A **server ignores record and batch properties it does not know**, and says so with the
   warning `unknown_fields`. A newer reporter therefore works with an older server; the
   published schemas stay strict (`additionalProperties: false`) so that reporters can catch

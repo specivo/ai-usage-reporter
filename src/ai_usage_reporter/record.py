@@ -234,6 +234,9 @@ def to_wire(record: ContractRecord) -> dict[str, Any]:
         wire["request_count"] = record.request_count
     if record.long_context_tokens is not None and not record.long_context_tokens.is_zero():
         wire["long_context_tokens"] = _tokens(record.long_context_tokens)
+        # The buckets are disjoint and the usage is their sum, which has the same bound.
+        if any(v > MAX_COUNT for v in (record.tokens + record.long_context_tokens).as_dict().values()):
+            raise RecordError("token count out of range in tokens + long_context_tokens")
     cost = record.reported_cost
     if cost is not None and _AMOUNT.match(cost.amount) and _CURRENCY.match(cost.currency):
         wire["reported_cost"] = {"amount": cost.amount, "currency": cost.currency}

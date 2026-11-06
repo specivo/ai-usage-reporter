@@ -7,8 +7,10 @@ exchange-rate lookups for a bucket are the same for everyone.
 **Long context.** Some models bill a whole request at higher rates once the
 request's context (input plus cache reads and writes) passes a threshold.
 That decision is per request, so it is made here, before requests are summed:
-the tokens of a long request go to ``long_tokens`` and the others to
-``tokens``. The two never overlap (see the README, "Long context").
+all the tokens of a long request go to ``long_tokens`` and those of the
+others to ``tokens``. The contract's ``tokens`` and ``long_context_tokens``
+are two disjoint buckets: a request is counted wholly in one of them, and
+the record's usage is their sum (contract README, "Long-context tokens").
 """
 
 from __future__ import annotations

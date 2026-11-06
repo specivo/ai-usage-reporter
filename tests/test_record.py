@@ -131,3 +131,13 @@ def test_vendored_examples_match_the_schema() -> None:
 def test_record_dates_are_utc_days() -> None:
     record = make_record(day=date(2026, 10, 5), started_at=datetime(2026, 10, 5, 23, 59, tzinfo=UTC))
     assert record.to_wire()["usage_date"] == "2026-10-05"
+
+
+def test_long_context_and_base_tokens_are_bounded_together() -> None:
+    from ai_usage_reporter.record import MAX_COUNT, RecordError
+
+    near = TokenCounts(input=MAX_COUNT - 10)
+    ok_record = make_record(tokens=near, long_context_tokens=TokenCounts(input=10))
+    assert ok_record.to_wire()["long_context_tokens"] == {"input": 10}
+    with pytest.raises(RecordError):
+        make_record(tokens=near, long_context_tokens=TokenCounts(input=11)).to_wire()
