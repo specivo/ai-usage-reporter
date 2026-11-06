@@ -20,7 +20,7 @@ from ai_usage_reporter.config import Config
 from ai_usage_reporter.dedup import deduplicate
 from ai_usage_reporter.enrich import Enricher, GitInfo
 from ai_usage_reporter.longcontext import Thresholds
-from ai_usage_reporter.model import UsageEvent
+from ai_usage_reporter.model import SourceBusyError, UsageEvent
 from ai_usage_reporter.record import ContractRecord, RecordError, canonical_json, opaque_session_id
 from ai_usage_reporter.sinks import PENDING, Outcome, Sink
 from ai_usage_reporter.state import CONFLICT, REJECTED, SENT, FileIdentity, State
@@ -54,6 +54,8 @@ class SourceReport:
     after_dedup: int = 0
     excluded: int = 0
     failed_files: int = 0
+    #: Files the tool held locked; they are read on the next run.
+    busy_files: int = 0
 
 
 @dataclass(slots=True)
@@ -82,12 +84,21 @@ def _excluded(cwd: str | None, prefixes: Sequence[str]) -> bool:
     return any(target == p or target.startswith(p.rstrip(os.sep) + os.sep) for p in prefixes)
 
 
-def _parse_file(adapter: Adapter, src: Any, report: SourceReport) -> list[UsageEvent]:
+def _parse_file(adapter: Adapter, src: Any, report: SourceReport) -> list[UsageEvent] | None:
+    """The file's events, or ``None`` when it could not be read this time (it is not cached then)."""
     try:
         return list(adapter.parse(src))
+    except SourceBusyError:
+        report.busy_files += 1
+        return None
     except Exception:  # an adapter must not fail the run; the file is retried next time
         report.failed_files += 1
-        return []
+        return None
+
+
+def native_sources(config: Config, registry: Registry) -> tuple[str, ...]:
+    """The adapters that read their tool's own logs: enabled, and not handed over to an import."""
+    return tuple(n for n in registry.adapters if config.source(n).enabled and config.source(n).via == "native")
 
 
 def collect(
@@ -105,7 +116,10 @@ def collect(
     now = now or datetime.now(UTC)
     selection = selection or Selection()
     thresholds = Thresholds(config.long_context)
-    names = selection.sources or tuple(n for n in registry.adapters if config.source(n).enabled)
+    # A tool whose usage comes from an import ("via") is never read natively, even when asked for.
+    names = tuple(
+        n for n in (selection.sources or native_sources(config, registry)) if config.source(n).via == "native"
+    )
     excluded = [_norm(str(Path(p).expanduser())) for p in config.exclude_paths]
     reports: dict[str, SourceReport] = {}
     events: list[UsageEvent] = []
@@ -123,7 +137,7 @@ def collect(
         adapter_events: list[UsageEvent] = []
         for src in sources:
             try:
-                identity = FileIdentity.of(src.path)
+                identity = FileIdentity.of(src.path, src.companions)
             except OSError:
                 report.failed_files += 1
                 continue
@@ -133,10 +147,13 @@ def collect(
                 file_events = cached
             else:
                 report.parsed += 1
-                file_events = _parse_file(adapter, src, report)
+                parsed = _parse_file(adapter, src, report)
                 report.lines += src.stats.lines
                 report.malformed_lines += src.stats.malformed_lines
                 report.skipped_events += src.stats.skipped_events
+                if parsed is None:
+                    continue
+                file_events = parsed
                 if state is not None:
                     state.store_events(
                         src.path,
@@ -159,7 +176,14 @@ def collect(
         events.extend(kept)
     if selection.session is not None:
         wanted = selection.session
-        events = [e for e in events if wanted in (e.session_id, opaque_session_id(e.session_id))]
+        # A record holds a session's full totals, so naming a child session (a
+        # subagent) selects the whole parent session it is folded into.
+        chosen = {
+            (e.tool, e.session_id)
+            for e in events
+            if wanted in (e.session_id, opaque_session_id(e.session_id), e.sub_session_id)
+        }
+        events = [e for e in events if (e.tool, e.session_id) in chosen]
     oldest = (now - timedelta(days=max_age_days - 1)).date()
     buckets = aggregate(events, thresholds)
     too_old = sum(1 for b in buckets if b.usage_date < oldest)

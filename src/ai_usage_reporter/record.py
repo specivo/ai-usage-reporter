@@ -21,6 +21,7 @@ import json
 import re
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from ai_usage_reporter.model import TOKEN_CLASSES, TokenCounts
@@ -93,6 +94,15 @@ class ContractRecord:
 
     def payload_hash(self) -> str:
         return hashlib.sha256(canonical_json(self.to_wire()).encode()).hexdigest()
+
+
+def format_amount(value: Decimal) -> str:
+    """A non-negative amount in the contract's form: at most 8 decimals, no exponent, no trailing zeros."""
+    rounded = value.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP)
+    text = f"{rounded:f}"
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
 
 
 def idempotency_key(tool: str, session_id: str, model: str, usage_date: date) -> str:

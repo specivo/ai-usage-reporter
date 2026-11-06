@@ -12,6 +12,8 @@ For each bucket:
 - ``project_key``: from the ``[projects]`` repository mapping.
 - ``cost_type`` and ``subscription_hint``: from the first matching
   ``[[cost_rules]]`` entry.
+- ``reported_cost``: the sum of the costs the tool logged, when it logged one
+  for every request of the bucket (OpenCode does).
 
 The working directory is read here, locally, and never copied into a record.
 
@@ -39,6 +41,8 @@ from ai_usage_reporter.config import Config
 from ai_usage_reporter.record import (
     Attribution,
     ContractRecord,
+    Money,
+    format_amount,
     idempotency_key,
     normalise_repo,
     opaque_session_id,
@@ -188,6 +192,8 @@ class Enricher:
         if self.drop_explicit(key):
             attribution = attribution.without_explicit()
         rule = self.config.cost_for(bucket.tool, bucket.model, repo)
+        cost = bucket.reported_cost
+        reported = Money(format_amount(cost[0]), cost[1]) if cost is not None else None
         return ContractRecord(
             idempotency_key=key,
             tool=bucket.tool,
@@ -201,6 +207,7 @@ class Enricher:
             started_at=bucket.started_at,
             ended_at=bucket.ended_at,
             request_count=bucket.request_count,
+            reported_cost=reported,
             cost_type=rule.cost_type if rule else None,
             subscription_hint=rule.subscription_hint if rule else None,
             on_behalf_of=self.config.on_behalf_of,

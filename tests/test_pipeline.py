@@ -200,3 +200,32 @@ def test_disabled_sources_are_skipped(fixture_homes: dict[str, Path]) -> None:
         context_for=lambda a, roots: DiscoveryContext(home=fixture_homes["codex"].parent, env={}, roots=roots),
     )
     assert set(collected.reports) == {"codex"}
+
+
+def test_reported_cost_needs_every_request_priced() -> None:
+    from datetime import UTC, datetime
+    from decimal import Decimal
+
+    from ai_usage_reporter.aggregate import aggregate
+    from ai_usage_reporter.model import TokenCounts, UsageEvent
+    from ai_usage_reporter.record import format_amount
+
+    def event(minute: int, cost: str | None) -> UsageEvent:
+        return UsageEvent(
+            tool="opencode",
+            session_id="s",
+            model="m",
+            timestamp=datetime(2026, 10, 5, 10, minute, tzinfo=UTC),
+            tokens=TokenCounts(input=1),
+            cost=cost,
+            cost_currency="USD" if cost is not None else None,
+        )
+
+    [priced] = aggregate([event(1, "0.1"), event(2, "0.000000014")], lambda m: None)
+    assert priced.reported_cost == (Decimal("0.100000014"), "USD")
+    assert format_amount(Decimal("0.100000014")) == "0.10000001"
+    assert format_amount(Decimal("12.50")) == "12.5" and format_amount(Decimal("0")) == "0"
+    [partial] = aggregate([event(1, "0.1"), event(2, None)], lambda m: None)
+    assert partial.reported_cost is None
+    [free] = aggregate([event(1, "0")], lambda m: None)
+    assert free.reported_cost is None

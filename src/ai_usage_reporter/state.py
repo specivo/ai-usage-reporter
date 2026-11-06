@@ -95,9 +95,19 @@ class FileIdentity:
     mtime_ns: int
 
     @classmethod
-    def of(cls, path: Path) -> FileIdentity:
+    def of(cls, path: Path, companions: tuple[Path, ...] = ()) -> FileIdentity:
+        """The identity of *path*; a change in any companion file (that exists) changes it too."""
         st = path.stat()
-        return cls(inode=st.st_ino, device=st.st_dev, size=st.st_size, mtime_ns=st.st_mtime_ns)
+        size, mtime_ns = st.st_size, st.st_mtime_ns
+        for extra in companions:
+            try:
+                other = extra.stat()
+            except OSError:
+                continue
+            # A write to the companion changes its size or its modification time.
+            size += other.st_size
+            mtime_ns = max(mtime_ns, other.st_mtime_ns)
+        return cls(inode=st.st_ino, device=st.st_dev, size=size, mtime_ns=mtime_ns)
 
 
 @dataclass(frozen=True, slots=True)

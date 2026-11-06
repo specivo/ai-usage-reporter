@@ -85,6 +85,19 @@ class FakeServer:
         return responder(batch["records"])
 
 
+@pytest.fixture(autouse=True)
+def isolated_home(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """No test ever reads the real home directory: the tools' logs, configs and data live there."""
+    home = tmp_path_factory.mktemp("home")
+    for name in ("HOME", "USERPROFILE"):
+        monkeypatch.setenv(name, str(home))
+    for name in ("XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
+        monkeypatch.setenv(name, str(home / name.lower()))
+    for name in ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "OPENCODE_DB", "SPECIVO_ISSUE", "APPDATA", "LOCALAPPDATA"):
+        monkeypatch.delenv(name, raising=False)
+    return home
+
+
 @pytest.fixture
 def server() -> FakeServer:
     return FakeServer()

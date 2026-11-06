@@ -17,6 +17,7 @@ from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
+from decimal import Decimal, InvalidOperation
 
 from ai_usage_reporter.model import TokenCounts, UsageEvent
 
@@ -37,6 +38,18 @@ class Bucket:
     git_branch: str | None = None
     repo_url: str | None = None
     cwds: Counter[str] = field(default_factory=Counter)
+    #: The sum of the requests' reported costs, and their currencies. The sum
+    #: is only meaningful when ``cost_complete`` (every request had a cost).
+    cost_total: Decimal = Decimal(0)
+    cost_currencies: set[str] = field(default_factory=set)
+    cost_complete: bool = True
+
+    @property
+    def reported_cost(self) -> tuple[Decimal, str] | None:
+        """The bucket's cost as the tool reported it: every request priced, one currency, above zero."""
+        if not self.cost_complete or len(self.cost_currencies) != 1 or self.cost_total <= 0:
+            return None
+        return self.cost_total, next(iter(self.cost_currencies))
 
     @property
     def key(self) -> tuple[str, str, str, date]:
@@ -84,4 +97,21 @@ def aggregate(events: Iterable[UsageEvent], threshold_for: ThresholdLookup) -> l
         bucket.repo_url = event.repo_url or bucket.repo_url
         if event.cwd:
             bucket.cwds[event.cwd] += 1
+        _add_cost(bucket, event)
     return sorted(buckets.values(), key=lambda b: (b.usage_date, b.tool, b.session_id, b.model))
+
+
+def _add_cost(bucket: Bucket, event: UsageEvent) -> None:
+    if event.cost is None or not event.cost_currency:
+        bucket.cost_complete = False
+        return
+    try:
+        amount = Decimal(event.cost)
+    except InvalidOperation:
+        bucket.cost_complete = False
+        return
+    if not amount.is_finite() or amount < 0:
+        bucket.cost_complete = False
+        return
+    bucket.cost_total += amount
+    bucket.cost_currencies.add(event.cost_currency)

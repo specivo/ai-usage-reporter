@@ -117,10 +117,23 @@ class CostRule:
         return True
 
 
+#: Where a tool's usage comes from: its own logs (``native``) or ``ai-usage import ccusage``.
+SOURCE_VIAS = ("native", "ccusage")
+
+
 @dataclass(frozen=True, slots=True)
 class SourceSettings:
+    """``[sources.<tool>]``.
+
+    ``via`` makes the two ways of reading a tool exclusive: with ``native`` (the
+    default) ``push`` reads the tool's logs and ``import ccusage`` skips its
+    rows; with ``ccusage`` it is the other way round. A tool is never counted
+    twice.
+    """
+
     enabled: bool = True
     roots: tuple[str, ...] = ()
+    via: str = "native"
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,7 +209,13 @@ def parse_config(data: Mapping[str, Any], path: Path | None = None) -> Config:
         enabled = table.get("enabled", True)
         if not isinstance(enabled, bool):
             raise ConfigError(f"sources.{name}.enabled must be true or false")
-        sources[name] = SourceSettings(enabled=enabled, roots=_str_list(table, "roots", f"sources.{name}."))
+        extra = set(table) - {"enabled", "roots", "via"}
+        if extra:
+            raise ConfigError(f"[sources.{name}]: unknown key(s) {', '.join(sorted(extra))}")
+        via = table.get("via", "native")
+        if via not in SOURCE_VIAS:
+            raise ConfigError(f"sources.{name}.via must be one of {', '.join(SOURCE_VIAS)}")
+        sources[name] = SourceSettings(enabled=enabled, roots=_str_list(table, "roots", f"sources.{name}."), via=via)
     rules: list[CostRule] = []
     raw_rules = data.get("cost_rules", [])
     if not isinstance(raw_rules, list):
@@ -289,6 +308,14 @@ exclude_paths = []
 
 # [sources.codex]
 # enabled = true
+
+# [sources.opencode]
+# roots = ["~/.local/share/opencode"]
+
+# A tool read through "ai-usage import ccusage" instead of its own logs.
+# The two are exclusive, so the tool is never counted twice.
+# [sources.gemini-cli]
+# via = "ccusage"
 
 # How usage is paid. The first matching rule wins; leave out to let Specivo decide.
 # [[cost_rules]]

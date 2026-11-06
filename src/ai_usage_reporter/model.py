@@ -79,13 +79,19 @@ class ParseStats:
     skipped_events: int = 0
 
 
+class SourceBusyError(Exception):
+    """The source is locked by its tool right now; it is skipped and read on the next run."""
+
+
 @dataclass(slots=True)
 class SourceFile:
     """One log file an adapter found.
 
     ``path`` is local only. ``priority`` orders copies of the same session (lower
     wins) when an adapter keeps one copy per session; ``session_hint`` is the
-    session id the adapter read from the path, if any.
+    session id the adapter read from the path, if any. ``companions`` are files
+    whose changes also change what :meth:`Adapter.parse` reads from ``path``
+    (a SQLite write-ahead log), so the reporter parses again when they change.
     """
 
     adapter: str
@@ -94,6 +100,7 @@ class SourceFile:
     session_hint: str | None = None
     priority: int = 0
     stats: ParseStats = field(default_factory=ParseStats)
+    companions: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +134,14 @@ class UsageEvent:
     source_path: str | None = None
     #: How many model requests this event stands for (normally 1).
     requests: int = 1
+    #: The child session (a subagent) the request ran in, when ``session_id``
+    #: is the parent it was folded into. ``push --session`` matches either.
+    sub_session_id: str | None = None
+    #: What the tool says the request cost, as a decimal string, and its ISO
+    #: 4217 currency. Sent as ``reported_cost`` when every request of a bucket
+    #: has one.
+    cost: str | None = None
+    cost_currency: str | None = None
 
     def to_cache(self) -> dict[str, Any]:
         """A JSON-able form for the local state cache (never sent anywhere)."""
