@@ -18,9 +18,11 @@ See ``docs/configuration.md`` for every setting.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import sys
 import tomllib
+import urllib.parse
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
@@ -35,6 +37,39 @@ CONFIG_FILE = "config.toml"
 
 class ConfigError(ValueError):
     pass
+
+
+def is_loopback_host(host: str | None) -> bool:
+    """``localhost``, ``127.0.0.0/8`` or ``::1``."""
+    if not host:
+        return False
+    if host.lower().rstrip(".") == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def check_server_url(url: str, *, allow_insecure_http: bool = False) -> str:
+    """The server URL, refused unless the API key would travel encrypted.
+
+    ``https://`` is always accepted. Plain ``http://`` sends the API key in
+    clear text, so it is accepted only for this machine (``localhost``,
+    ``127.0.0.0/8``, ``::1``), or anywhere when ``allow_insecure_http`` is set
+    (off by default; meant for a test server on a trusted private network).
+    """
+    parsed = urllib.parse.urlsplit(url.strip())
+    if parsed.scheme not in ("https", "http") or not parsed.hostname:
+        raise ConfigError("url must be an https:// URL with a host name")
+    if parsed.username or parsed.password:
+        raise ConfigError("url must not contain a user name or password")
+    if parsed.scheme == "http" and not allow_insecure_http and not is_loopback_host(parsed.hostname):
+        raise ConfigError(
+            "url must use https:// (plain http:// would send the API key unencrypted); http:// is allowed only"
+            " for localhost, or with allow_insecure_http = true on a trusted private network"
+        )
+    return url.strip()
 
 
 def _platform_dir(env: Mapping[str, str], home: Path, *, state: bool) -> Path:
@@ -91,6 +126,8 @@ class SourceSettings:
 @dataclass(frozen=True, slots=True)
 class Config:
     url: str | None = None
+    allow_insecure_http: bool = False
+    git_enrichment: bool = True
     timezone: str | None = None
     on_behalf_of: str | None = None
     git_commits: bool = True
@@ -137,15 +174,18 @@ def _str_list(data: Mapping[str, Any], key: str, where: str) -> tuple[str, ...]:
 
 def parse_config(data: Mapping[str, Any], path: Path | None = None) -> Config:
     known = {
-        "url", "timezone", "on_behalf_of", "git_commits", "exclude_paths",
+        "url", "allow_insecure_http", "timezone", "on_behalf_of", "git_enrichment", "git_commits", "exclude_paths",
         "sources", "cost_rules", "projects", "long_context",
     }  # fmt: skip
     unknown = sorted(set(data) - known)
     if unknown:
         raise ConfigError(f"unknown setting(s): {', '.join(unknown)}")
-    git_commits = data.get("git_commits", True)
-    if not isinstance(git_commits, bool):
-        raise ConfigError("git_commits must be true or false")
+    flags: dict[str, bool] = {}
+    for name, default in (("git_commits", True), ("git_enrichment", True), ("allow_insecure_http", False)):
+        value = data.get(name, default)
+        if not isinstance(value, bool):
+            raise ConfigError(f"{name} must be true or false")
+        flags[name] = value
     sources: dict[str, SourceSettings] = {}
     raw_sources = data.get("sources", {})
     if not isinstance(raw_sources, dict):
@@ -189,13 +229,15 @@ def parse_config(data: Mapping[str, Any], path: Path | None = None) -> Config:
     ):
         raise ConfigError("[long_context] maps model patterns to positive token thresholds")
     url = _opt_str(data, "url", "")
-    if url is not None and not url.startswith(("https://", "http://")):
-        raise ConfigError("url must start with https:// (or http:// for a local server)")
+    if url is not None:
+        url = check_server_url(url, allow_insecure_http=flags["allow_insecure_http"])
     return Config(
         url=url,
+        allow_insecure_http=flags["allow_insecure_http"],
+        git_enrichment=flags["git_enrichment"],
         timezone=_opt_str(data, "timezone", ""),
         on_behalf_of=_opt_str(data, "on_behalf_of", ""),
-        git_commits=git_commits,
+        git_commits=flags["git_commits"],
         exclude_paths=_str_list(data, "exclude_paths", ""),
         sources=sources,
         cost_rules=tuple(rules),
@@ -224,14 +266,18 @@ CONFIG_TEMPLATE = """\
 # keychain, in the SPECIVO_API_KEY environment variable or in the api-key file
 # next to this one (readable only by you).
 url = "{url}"
-
+{insecure}
 # Time zone for dates shown by "ai-usage status". Buckets are always UTC days.
 # timezone = "Asia/Bangkok"
 
 # A service account reporting for one person sends their login.
 # on_behalf_of = "login"
 
-# Add the SHAs of commits you made during a session (needs git).
+# Ask git (read-only, hardened) for the repository and the commits of a session.
+# Set to false to never run git; "push --no-git" does the same for one run.
+git_enrichment = true
+
+# Add the SHAs of commits you made during a session (needs git_enrichment).
 git_commits = true
 
 # Sessions that ran in these directories are never reported.
@@ -260,5 +306,12 @@ exclude_paths = []
 """
 
 
-def render_template(url: str) -> str:
-    return CONFIG_TEMPLATE.replace("{url}", url.replace("\\", "\\\\").replace('"', '\\"'))
+def render_template(url: str, *, allow_insecure_http: bool = False) -> str:
+    insecure = (
+        "# Plain http:// to a host that is not this machine: the API key travels unencrypted.\n"
+        "allow_insecure_http = true\n"
+        if allow_insecure_http
+        else ""
+    )
+    escaped = url.replace("\\", "\\\\").replace('"', '\\"')
+    return CONFIG_TEMPLATE.replace("{url}", escaped).replace("{insecure}", insecure)

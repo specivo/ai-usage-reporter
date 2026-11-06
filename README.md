@@ -104,6 +104,11 @@ a session's total includes what it fanned out.
   built from an allowlist, field by field, and every value is checked against the contract's
   format; anything that does not fit is left out.
 - `ai-usage show-payload` and `ai-usage push --dry-run` show exactly what would be sent.
+- The API key only travels over `https://` (plain `http://` only to this machine, unless you set
+  `allow_insecure_http = true`), and redirects are never followed.
+- `git` (for repository and commit hints) runs read-only, only in directories you own, with the
+  programs a repository can configure (fsmonitor, hooks, GPG, external diff, pager) switched off.
+  `git_enrichment = false` or `push --no-git` turns it off.
 - The local state database (in your user state directory) keeps file paths, to know which logs
   changed, and the records it sent. It never leaves your machine.
 - The test suite plants canary strings in prompts, tool output, paths and git credentials of the

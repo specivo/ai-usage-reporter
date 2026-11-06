@@ -33,8 +33,8 @@ def env(tmp_path: Path, fixture_homes: dict[str, Path], monkeypatch: pytest.Monk
 def server(monkeypatch: pytest.MonkeyPatch) -> FakeServer:
     fake = FakeServer()
 
-    def make(url: str, key: str) -> SpecivoSink:
-        return SpecivoSink(url, key, transport=fake, sleep=lambda s: None)
+    def make(url: str, key: str, **kwargs: Any) -> SpecivoSink:
+        return SpecivoSink(url, key, transport=fake, sleep=lambda s: None, **kwargs)
 
     monkeypatch.setattr(cli, "SpecivoSink", make)
     return fake

@@ -26,6 +26,7 @@ from ai_usage_reporter.config import (
     CONFIG_FILE,
     Config,
     ConfigError,
+    check_server_url,
     config_dir,
     load_config,
     render_template,
@@ -94,8 +95,15 @@ def _collect(
 ) -> Collected:
     registry = load_adapters()
     issues = _session_issues(state, selection, dict(os.environ), store=store_hints)
-    git = None if getattr(args, "no_git", False) else GitInfo()
+    git = _git(args, config)
     return collect(config, registry, selection=selection, state=state, git=git, session_issues=issues)
+
+
+def _git(args: argparse.Namespace, config: Config) -> GitInfo | None:
+    """git hints, unless turned off by --no-git or git_enrichment = false."""
+    if getattr(args, "no_git", False) or not config.git_enrichment:
+        return None
+    return GitInfo()
 
 
 def _print_collection(collected: Collected, out: TextIO) -> None:
@@ -129,7 +137,10 @@ def _make_sink(args: argparse.Namespace, config: Config, cfg_path: Path) -> Sink
     if name == "specivo":
         if not config.url:
             raise CliError("no server URL: run 'ai-usage init' or set url in the config file")
-        return SpecivoSink(config.url, _api_key(config, cfg_path))
+        try:
+            return SpecivoSink(config.url, _api_key(config, cfg_path), allow_insecure_http=config.allow_insecure_http)
+        except SinkError as exc:
+            raise CliError(str(exc)) from None
     factories = plugin_sinks()
     if name not in factories:
         raise CliError(f"unknown sink {name!r}")
@@ -149,13 +160,15 @@ def _make_sink(args: argparse.Namespace, config: Config, cfg_path: Path) -> Sink
 def cmd_init(args: argparse.Namespace) -> int:
     cfg_path, _ = _paths(args)
     url = args.url or input("Specivo URL (https://...): ").strip()
-    if not url.startswith(("https://", "http://")):
-        raise CliError("the URL must start with https://")
+    try:
+        url = check_server_url(url, allow_insecure_http=args.allow_insecure_http)
+    except ConfigError as exc:
+        raise CliError(str(exc)) from None
     if cfg_path.exists() and not args.force:
         print("The config file exists; left unchanged (use --force to rewrite it).")
     else:
         cfg_path.parent.mkdir(parents=True, exist_ok=True)
-        cfg_path.write_text(render_template(url), encoding="utf-8")
+        cfg_path.write_text(render_template(url, allow_insecure_http=args.allow_insecure_http), encoding="utf-8")
         print("Wrote the config file.")
     if args.skip_key:
         return 0
@@ -168,9 +181,8 @@ def cmd_init(args: argparse.Namespace) -> int:
     where = store_api_key(url, key, cfg_path.parent, use_keyring=not args.no_keyring)
     print("Stored the API key in the OS keychain." if where == "keychain" else "Stored the API key in a private file.")
     if not args.offline:
-        sink = SpecivoSink(url, key)
         try:
-            info = sink.info()
+            info = SpecivoSink(url, key, allow_insecure_http=args.allow_insecure_http).info()
         except SinkError as exc:
             raise CliError(f"server check failed: {exc}") from None
         print(f"Server OK: accepts {', '.join(info.versions)}.")
@@ -189,7 +201,7 @@ def cmd_push(args: argparse.Namespace) -> int:
         finally:
             if existing is not None:
                 existing.close()
-        git = None if args.no_git else GitInfo()
+        git = _git(args, config)
         collected = collect(config, load_adapters(), selection=selection, git=git, session_issues=hints)
         sink = _make_sink(args, config, cfg_path)
         sink.send([r.to_wire() for r in collected.records])
@@ -239,7 +251,7 @@ def cmd_show_payload(args: argparse.Namespace) -> int:
     finally:
         if existing is not None:
             existing.close()
-    git = None if args.no_git else GitInfo()
+    git = _git(args, config)
     collected = collect(config, load_adapters(), selection=selection, git=git, session_issues=hints)
     wires = [r.to_wire() for r in collected.records]
     batches = [wires[i : i + 500] for i in range(0, len(wires), 500)] or [[]]
@@ -343,7 +355,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"records that would be sent: {len(collected.records)}")
     if config.url and key is not None and not args.offline:
         try:
-            info = SpecivoSink(config.url, key.value).info()
+            info = SpecivoSink(config.url, key.value, allow_insecure_http=config.allow_insecure_http).info()
             print(f"server: accepts {', '.join(info.versions)}; up to {info.max_records} records per batch")
             if info.server_time:
                 skew = (
@@ -397,6 +409,11 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--no-keyring", action="store_true", help="store the key in a private file, not the keychain")
     init.add_argument("--force", action="store_true", help="rewrite an existing config file")
     init.add_argument("--offline", action="store_true", help="do not check the server")
+    init.add_argument(
+        "--allow-insecure-http",
+        action="store_true",
+        help="accept a plain http:// URL to another machine (the API key travels unencrypted; trusted networks only)",
+    )
     init.set_defaults(func=cmd_init)
 
     push = sub.add_parser("push", help="send new and changed usage")

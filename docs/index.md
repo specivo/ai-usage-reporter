@@ -189,6 +189,12 @@ your repositories in `[projects]` to get the precise reasons.
 - The local state database keeps the paths of the log files it read, to skip unchanged ones, and
   the records it sent. It stays on your machine.
 - `exclude_paths` in the config keeps sessions that ran in those directories out entirely.
+- The API key is only sent over `https://` (or to this machine), and redirects are never
+  followed, so the key cannot be forwarded to another address. A server that redirects makes
+  `push` stop with an error naming the target; put the final address in `url`.
+- `git` runs read-only, only in directories you own, with git's own `safe.directory` check on,
+  and with every program a repository can configure (fsmonitor, hooks, GPG, external diff,
+  pager) switched off on the command line.
 
 ## Configuration
 
@@ -204,10 +210,12 @@ your repositories in `[projects]` to get the precise reasons.
 
 | Setting | Meaning |
 |---|---|
-| `url` | The Specivo server |
+| `url` | The Specivo server. Must be `https://`; plain `http://` is accepted only for this machine (`localhost`, `127.0.0.0/8`, `::1`) |
+| `allow_insecure_http` | `true` also accepts plain `http://` to another machine. The API key then travels unencrypted, so use it only for a test server on a network you trust. Default `false`; `ai-usage init --allow-insecure-http` sets it |
+| `git_enrichment` | Ask `git` for the repository and commit hints (default `true`); `false` never runs git, like `push --no-git` |
 | `timezone` | Time zone for times shown by `status` (buckets are always UTC days) |
 | `on_behalf_of` | The login usage is reported for (service accounts) |
-| `git_commits` | Add SHAs of your commits made during the session (default `true`) |
+| `git_commits` | Add SHAs of your commits made during the session (default `true`; needs `git_enrichment`) |
 | `exclude_paths` | Sessions that ran in these directories are never reported |
 | `[sources.<name>]` | `enabled = false` turns a source off; `roots = [...]` reads other directories |
 | `[[cost_rules]]` | `tool`, `model`, `repo` (patterns) → `cost_type`, `subscription_hint`; the first match wins |
@@ -221,6 +229,7 @@ your repositories in `[projects]` to get the precise reasons.
 | `no API key` | Run `ai-usage init`, or set `SPECIVO_API_KEY` |
 | `the api-key file can be read by other users` | `chmod 600` the file in the config directory |
 | `does not accept specivo.ai-usage.v1` | Upgrade Specivo to 0.13.0 or later |
+| `the server redirected (30x) to ...` | Put the address the redirect names (usually the `https://` one) in `url` |
 | `doctor` warns about the clock | Fix the computer's clock; records dated in the future are refused |
 | Records refused with `forbidden` | The account lacks **Log AI usage** in the project, or (with `on_behalf_of`) **Log AI usage for others** |
 | Records refused with `key_conflict` | Another account already reported these buckets for you; use one reporter per person |

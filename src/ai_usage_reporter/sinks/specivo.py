@@ -8,6 +8,11 @@
   the next run (the retry queue).
 - ``413``: the batch is split in half.
 - ``401``/``403``, ``400``: the whole push stops with :class:`SinkError`.
+- Redirects are never followed: following one would send the API key to
+  wherever the ``Location`` points. Any ``3xx`` stops the push with an error
+  that names the target, so the configured URL can be corrected.
+- The URL must be ``https://``, except for this machine (see
+  :func:`ai_usage_reporter.config.check_server_url`).
 """
 
 from __future__ import annotations
@@ -15,6 +20,7 @@ from __future__ import annotations
 import json
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -23,6 +29,7 @@ from email.utils import parsedate_to_datetime
 from typing import Any
 
 from ai_usage_reporter import CONTRACT_VERSION, __version__
+from ai_usage_reporter.config import ConfigError, check_server_url
 from ai_usage_reporter.sinks import PENDING, Outcome, make_batch
 
 DEFAULT_MAX_RECORDS = 500
@@ -47,10 +54,28 @@ class HttpResponse:
 Transport = Callable[[str, str, Mapping[str, str], bytes | None], HttpResponse]
 
 
+class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
+    """Never follow a redirect: the 3xx answer comes back as an HTTPError instead."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        return None
+
+
+_OPENER = urllib.request.build_opener(_RefuseRedirects)
+
+
 def urllib_transport(method: str, url: str, headers: Mapping[str, str], body: bytes | None) -> HttpResponse:
     request = urllib.request.Request(url, data=body, method=method, headers=dict(headers))
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:  # noqa: S310 - https URL from config
+        with _OPENER.open(request, timeout=TIMEOUT_SECONDS) as response:
             return HttpResponse(response.status, dict(response.headers.items()), response.read())
     except urllib.error.HTTPError as exc:
         return HttpResponse(exc.code, dict(exc.headers.items()) if exc.headers else {}, exc.read() or b"")
@@ -84,6 +109,16 @@ def _header(headers: Mapping[str, str], name: str) -> str | None:
         if key.lower() == name.lower():
             return value
     return None
+
+
+def redirect_error(response: HttpResponse) -> SinkError:
+    location = _header(response.headers, "Location") or ""
+    target = urllib.parse.urlsplit(location)
+    where = f"{target.scheme}://{target.hostname}" if target.scheme and target.hostname else "another address"
+    return SinkError(
+        f"the server redirected ({response.status}) to {where}; redirects are not followed so the API key"
+        " cannot leak; set url to the server's final address"
+    )
 
 
 def _error_code(body: bytes) -> str:
@@ -120,7 +155,12 @@ class SpecivoSink:
         *,
         transport: Transport = urllib_transport,
         sleep: Callable[[float], None] = time.sleep,
+        allow_insecure_http: bool = False,
     ) -> None:
+        try:
+            check_server_url(url, allow_insecure_http=allow_insecure_http)
+        except ConfigError as exc:
+            raise SinkError(str(exc)) from None
         self.url = endpoint(url)
         self._api_key = api_key
         self.transport = transport
@@ -148,6 +188,8 @@ class SpecivoSink:
             response = self.transport("GET", self.url, self._headers(False), None)
         except (OSError, urllib.error.URLError) as exc:
             raise SinkError(f"cannot reach the server: {type(exc).__name__}") from None
+        if 300 <= response.status < 400:
+            raise redirect_error(response)
         if response.status in (401, 403):
             raise SinkError(f"the server refused the API key ({response.status} {_error_code(response.body)})")
         if response.status == 404:
@@ -240,6 +282,8 @@ class SpecivoSink:
                 continue
             if response.status == 413:
                 return "split"
+            if 300 <= response.status < 400:
+                raise redirect_error(response)
             if response.status in (401, 403):
                 raise SinkError(f"the server refused the API key ({response.status} {_error_code(response.body)})")
             if 400 <= response.status < 500:
