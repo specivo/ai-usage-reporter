@@ -51,10 +51,11 @@ class DiscoveryContext:
 
 @dataclass(frozen=True, slots=True)
 class HookSpec:
-    """How a tool can call the reporter after a session (used by a later release).
+    """How a tool can call the reporter after a session (``ai-usage hooks install``).
 
-    ``kind`` names the mechanism (``claude-settings-hook``, ``codex-notify``),
-    ``events`` the tool events to hook.
+    ``kind`` names the mechanism (``claude-settings-hook``, ``codex-notify``,
+    ``gemini-settings-hook``, ``opencode-plugin``), ``events`` the tool events
+    that are hooked.
     """
 
     kind: str
@@ -101,8 +102,10 @@ def adapter_hook(adapter: Adapter) -> HookSpec | None:
 def builtin_adapters() -> list[Adapter]:
     from ai_usage_reporter.adapters.claude_code import ClaudeCodeAdapter
     from ai_usage_reporter.adapters.codex import CodexAdapter
+    from ai_usage_reporter.adapters.gemini_cli import GeminiCliAdapter
+    from ai_usage_reporter.adapters.opencode import OpenCodeAdapter
 
-    return [ClaudeCodeAdapter(), CodexAdapter()]
+    return [ClaudeCodeAdapter(), CodexAdapter(), GeminiCliAdapter(), OpenCodeAdapter()]
 
 
 @dataclass(slots=True)

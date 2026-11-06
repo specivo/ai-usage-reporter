@@ -333,6 +333,111 @@ def codex() -> None:
         os.utime(path, (1_790_000_000 + number, 1_790_000_000 + number))
 
 
+GEMINI_MAIN = "44444444-4444-4444-8444-444444444444"
+GEMINI_SUB = "55555555-5555-4555-8555-555555555555"
+GEMINI_OTHER = "66666666-6666-4666-8666-666666666666"
+
+
+def _gemini_message(
+    message_id: str, ts: str, model: str, inp: int, out: int, cached: int, thoughts: int, tool: int
+) -> dict[str, Any]:
+    return {
+        "id": message_id,
+        "timestamp": ts,
+        "type": "gemini",
+        "content": [{"text": "Here is the change."}],
+        "thoughts": [{"subject": "Plan", "description": f"Read {CANARY_PATH}/main.py", "timestamp": ts}],
+        "toolCalls": [{"id": "call-1", "name": "read_file", "result": [{"text": CANARY_OUTPUT}]}],
+        "model": model,
+        "tokens": {
+            "input": inp,
+            "output": out,
+            "cached": cached,
+            "thoughts": thoughts,
+            "tool": tool,
+            "total": inp + out + thoughts + tool,
+        },
+    }
+
+
+def gemini() -> None:
+    """Gemini CLI chat recordings: a legacy JSON session, its JSONL copy, a subagent and a second project."""
+    root = HERE / "gemini_cli"
+    shutil.rmtree(root, ignore_errors=True)
+    chats = root / "home" / ".gemini" / "tmp" / f"app-{CANARY_PATH}" / "chats"
+    user = {"id": "u-1", "timestamp": "2026-10-05T08:00:00.000Z", "type": "user", "content": [{"text": CANARY_PROMPT}]}
+    first = _gemini_message("g-1", "2026-10-05T08:00:05.000Z", "gemini-2.5-pro", 1200, 80, 1000, 40, 10)
+    second = _gemini_message("g-2", "2026-10-05T23:59:30.000Z", "gemini-2.5-pro", 3000, 150, 2500, 0, 0)
+    # The legacy whole-file JSON recording.
+    legacy = {
+        "sessionId": GEMINI_MAIN,
+        "projectHash": "0f" * 32,
+        "startTime": "2026-10-05T08:00:00.000Z",
+        "lastUpdated": "2026-10-05T23:59:30.000Z",
+        "messages": [user, first, second, {"id": "i-1", "type": "info", "content": "Saved."}],
+    }
+    chats.mkdir(parents=True)
+    (chats / "session-2026-10-05T08-00-44444444.json").write_text(json.dumps(legacy, indent=2), encoding="utf-8")
+    # The same session converted to JSONL and continued after midnight UTC.
+    partial = {**first, "tokens": {"input": 1200, "output": 0, "cached": 0, "thoughts": 0, "tool": 0, "total": 1200}}
+    _write(
+        chats / "session-2026-10-05T08-00-44444444.jsonl",
+        [
+            {
+                "sessionId": GEMINI_MAIN,
+                "projectHash": "0f" * 32,
+                "startTime": "2026-10-05T08:00:00.000Z",
+                "lastUpdated": "2026-10-05T08:00:00.000Z",
+                "kind": "main",
+            },
+            user,
+            partial,  # written again below in full: the last copy wins
+            first,
+            {"$set": {"lastUpdated": "2026-10-05T08:00:05.000Z", "summary": CANARY_PROMPT}},
+            {"$patch": {"id": "g-1", "toolCalls": [{"id": "call-1", "result": [{"text": CANARY_OUTPUT}]}]}},
+            second,
+            "{this line is not JSON",
+            {"$rewindTo": "g-3"},  # rewound, but the request was made: still counted
+            _gemini_message("g-3", "2026-10-06T00:00:10.000Z", "gemini-2.5-pro", 4000, 60, 3500, 20, 0),
+        ],
+    )
+    # A subagent of that session, folded into it.
+    _write(
+        chats / GEMINI_MAIN / f"{GEMINI_SUB}.jsonl",
+        [
+            {
+                "sessionId": GEMINI_SUB,
+                "projectHash": "0f" * 32,
+                "startTime": "2026-10-05T09:00:00.000Z",
+                "kind": "subagent",
+                "directories": [f"/work/{CANARY_PATH}/app"],
+            },
+            _gemini_message("s-1", "2026-10-05T09:00:05.000Z", "gemini-2.5-flash", 500, 20, 0, 5, 0),
+        ],
+    )
+    # Another project, with a message that has no usage and one without a timestamp.
+    other = root / "home" / ".gemini" / "tmp" / "tools" / "chats"
+    no_time = _gemini_message("o-2", "", "gemini-2.5-flash", 10, 1, 0, 0, 0)
+    no_time.pop("timestamp")
+    _write(
+        other / "session-2026-10-04T10-00-66666666.jsonl",
+        [
+            {"sessionId": GEMINI_OTHER, "projectHash": "1e" * 32, "startTime": "2026-10-04T10:00:00.000Z"},
+            {
+                "id": "o-0",
+                "timestamp": "2026-10-04T10:00:00.000Z",
+                "type": "gemini",
+                "content": "Hi",
+                "model": "gemini-2.5-flash",
+            },
+            _gemini_message("o-1", "2026-10-04T10:00:03.000Z", "gemini-2.5-flash", 700, 30, 0, 0, 0),
+            no_time,
+        ],
+    )
+    (other / "session-2026-10-04T10-00-66666666.jsonl.tmp-4242").write_text("{}", encoding="utf-8")
+
+
 if __name__ == "__main__":
     claude()
     codex()
+    gemini()

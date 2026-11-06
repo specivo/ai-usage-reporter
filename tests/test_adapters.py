@@ -144,7 +144,7 @@ def test_plugins_load_from_entry_points(monkeypatch: pytest.MonkeyPatch) -> None
     ]
     monkeypatch.setattr(adapters, "entry_points", lambda group: points if group == adapters.ENTRY_POINT_GROUP else [])
     registry = load_adapters()
-    assert set(registry.adapters) == {"claude-code", "codex", "example-tool"}
+    assert set(registry.adapters) == {"claude-code", "codex", "gemini-cli", "opencode", "example-tool"}
     assert len(registry.errors) == 2
 
 

@@ -1,0 +1,86 @@
+[
+  {
+    "ended_at": "2026-10-03T12:00:10Z",
+    "idempotency_key": "de6b89e50864ca976ac18d8297254fa426ae6dfd2bc549ad68646d4d002294b3",
+    "model": "claude-sonnet-4-5",
+    "provider": "anthropic",
+    "reported_cost": {
+      "amount": "0.0031",
+      "currency": "USD"
+    },
+    "request_count": 1,
+    "session_id": "ses_0009legacyddddddddddddd",
+    "started_at": "2026-10-03T12:00:10Z",
+    "tokens": {
+      "cache_read": 4000,
+      "cache_write_5m": 700,
+      "input": 60,
+      "output": 25
+    },
+    "tool": "opencode",
+    "tool_version": "0.9.0",
+    "usage_date": "2026-10-03"
+  },
+  {
+    "ended_at": "2026-10-05T10:01:00Z",
+    "idempotency_key": "4fbcd087e8ec9ff74d1dd1c51323ab666924f73c3278536ce2b070b4cdeb6350",
+    "model": "claude-sonnet-4-5",
+    "provider": "anthropic",
+    "reported_cost": {
+      "amount": "0.0363",
+      "currency": "USD"
+    },
+    "request_count": 3,
+    "session_id": "ses_0001rootaaaaaaaaaaaaaaaa",
+    "started_at": "2026-10-05T10:00:05Z",
+    "tokens": {
+      "cache_read": 20000,
+      "cache_write_5m": 3500,
+      "input": 660,
+      "output": 450,
+      "reasoning": 50
+    },
+    "tool": "opencode",
+    "tool_version": "2.2.5",
+    "usage_date": "2026-10-05"
+  },
+  {
+    "ended_at": "2026-10-05T23:59:59Z",
+    "idempotency_key": "1318ea36a786370f138f82a65b787a07cb3f6f31a22bda35fd9533569cee0af7",
+    "model": "gpt-5",
+    "provider": "openai",
+    "request_count": 1,
+    "session_id": "ses_0003othercccccccccccccc",
+    "started_at": "2026-10-05T23:59:59Z",
+    "tokens": {
+      "cache_read": 2000,
+      "input": 800,
+      "output": 100,
+      "reasoning": 300
+    },
+    "tool": "opencode",
+    "tool_version": "2.2.5",
+    "usage_date": "2026-10-05"
+  },
+  {
+    "ended_at": "2026-10-06T00:00:05Z",
+    "idempotency_key": "48da478c1431af62bea15e14bb0df3babe3f3895fab16feaf3c01b1d0ff2ccf7",
+    "model": "gpt-5",
+    "provider": "openai",
+    "reported_cost": {
+      "amount": "0.0015",
+      "currency": "USD"
+    },
+    "request_count": 1,
+    "session_id": "ses_0003othercccccccccccccc",
+    "started_at": "2026-10-06T00:00:05Z",
+    "tokens": {
+      "cache_read": 2800,
+      "input": 100,
+      "output": 20
+    },
+    "tool": "opencode",
+    "tool_version": "2.2.5",
+    "usage_date": "2026-10-06"
+  }
+]

@@ -1,0 +1,67 @@
+[
+  {
+    "ended_at": "2026-10-04T10:00:03Z",
+    "idempotency_key": "693faa69240dfc8fbd6a3e5665e7d17b7c8aa7d9b2298fcc15bbf8122f1f9ee6",
+    "model": "gemini-2.5-flash",
+    "provider": "google",
+    "request_count": 1,
+    "session_id": "66666666-6666-4666-8666-666666666666",
+    "started_at": "2026-10-04T10:00:03Z",
+    "tokens": {
+      "input": 700,
+      "output": 30
+    },
+    "tool": "gemini-cli",
+    "usage_date": "2026-10-04"
+  },
+  {
+    "ended_at": "2026-10-05T09:00:05Z",
+    "idempotency_key": "3286e388f7605147c4b49f797b63ee5d442e7179d5bf6788bc3c70bb3f72a2bf",
+    "model": "gemini-2.5-flash",
+    "provider": "google",
+    "request_count": 1,
+    "session_id": "44444444-4444-4444-8444-444444444444",
+    "started_at": "2026-10-05T09:00:05Z",
+    "tokens": {
+      "input": 500,
+      "output": 20,
+      "reasoning": 5
+    },
+    "tool": "gemini-cli",
+    "usage_date": "2026-10-05"
+  },
+  {
+    "ended_at": "2026-10-05T23:59:30Z",
+    "idempotency_key": "e31ea0b6abd7adf95f5c5ddddece28168c06841497032aca13a6dd063c24606f",
+    "model": "gemini-2.5-pro",
+    "provider": "google",
+    "request_count": 2,
+    "session_id": "44444444-4444-4444-8444-444444444444",
+    "started_at": "2026-10-05T08:00:05Z",
+    "tokens": {
+      "cache_read": 3500,
+      "input": 710,
+      "output": 230,
+      "reasoning": 40
+    },
+    "tool": "gemini-cli",
+    "usage_date": "2026-10-05"
+  },
+  {
+    "ended_at": "2026-10-06T00:00:10Z",
+    "idempotency_key": "11723f2f5310a09c4deaa201472278f9ad6832227fe4f9c25b385a764109d32f",
+    "model": "gemini-2.5-pro",
+    "provider": "google",
+    "request_count": 1,
+    "session_id": "44444444-4444-4444-8444-444444444444",
+    "started_at": "2026-10-06T00:00:10Z",
+    "tokens": {
+      "cache_read": 3500,
+      "input": 500,
+      "output": 60,
+      "reasoning": 20
+    },
+    "tool": "gemini-cli",
+    "usage_date": "2026-10-06"
+  }
+]

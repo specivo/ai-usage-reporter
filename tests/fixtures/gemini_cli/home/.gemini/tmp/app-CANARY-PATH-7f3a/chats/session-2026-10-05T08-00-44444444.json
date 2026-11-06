@@ -1,0 +1,97 @@
+{
+  "sessionId": "44444444-4444-4444-8444-444444444444",
+  "projectHash": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+  "startTime": "2026-10-05T08:00:00.000Z",
+  "lastUpdated": "2026-10-05T23:59:30.000Z",
+  "messages": [
+    {
+      "id": "u-1",
+      "timestamp": "2026-10-05T08:00:00.000Z",
+      "type": "user",
+      "content": [
+        {
+          "text": "CANARY-PROMPT-5c1e"
+        }
+      ]
+    },
+    {
+      "id": "g-1",
+      "timestamp": "2026-10-05T08:00:05.000Z",
+      "type": "gemini",
+      "content": [
+        {
+          "text": "Here is the change."
+        }
+      ],
+      "thoughts": [
+        {
+          "subject": "Plan",
+          "description": "Read CANARY-PATH-7f3a/main.py",
+          "timestamp": "2026-10-05T08:00:05.000Z"
+        }
+      ],
+      "toolCalls": [
+        {
+          "id": "call-1",
+          "name": "read_file",
+          "result": [
+            {
+              "text": "CANARY-TOOL-OUTPUT-9d07"
+            }
+          ]
+        }
+      ],
+      "model": "gemini-2.5-pro",
+      "tokens": {
+        "input": 1200,
+        "output": 80,
+        "cached": 1000,
+        "thoughts": 40,
+        "tool": 10,
+        "total": 1330
+      }
+    },
+    {
+      "id": "g-2",
+      "timestamp": "2026-10-05T23:59:30.000Z",
+      "type": "gemini",
+      "content": [
+        {
+          "text": "Here is the change."
+        }
+      ],
+      "thoughts": [
+        {
+          "subject": "Plan",
+          "description": "Read CANARY-PATH-7f3a/main.py",
+          "timestamp": "2026-10-05T23:59:30.000Z"
+        }
+      ],
+      "toolCalls": [
+        {
+          "id": "call-1",
+          "name": "read_file",
+          "result": [
+            {
+              "text": "CANARY-TOOL-OUTPUT-9d07"
+            }
+          ]
+        }
+      ],
+      "model": "gemini-2.5-pro",
+      "tokens": {
+        "input": 3000,
+        "output": 150,
+        "cached": 2500,
+        "thoughts": 0,
+        "tool": 0,
+        "total": 3150
+      }
+    },
+    {
+      "id": "i-1",
+      "type": "info",
+      "content": "Saved."
+    }
+  ]
+}
