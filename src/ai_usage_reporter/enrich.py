@@ -14,16 +14,25 @@ For each bucket:
   ``[[cost_rules]]`` entry.
 
 The working directory is read here, locally, and never copied into a record.
+
+**Running git safely.** The working directory comes from a transcript, so
+its repository may be someone else's, and a repository's own config can name
+programs git runs (fsmonitor, hooks, GPG, an external diff, a pager). git is
+therefore only run in directories owned by the current user, git's own
+``safe.directory`` ownership check is left on, and every call switches those
+programs off on the command line, which overrides the repository's config
+(see :data:`GIT_SAFETY_OPTIONS`). Only read-only commands are run.
 """
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from pathlib import Path
 
 from ai_usage_reporter.aggregate import Bucket
 from ai_usage_reporter.config import Config
@@ -42,19 +51,63 @@ COMMIT_GRACE = timedelta(minutes=10)
 GIT_TIMEOUT_SECONDS = 5.0
 
 
+#: Put before every git subcommand. Command-line config wins over the
+#: repository's, so none of the programs a repository may configure runs.
+GIT_SAFETY_OPTIONS: tuple[str, ...] = (
+    "-c", "core.fsmonitor=",
+    "-c", f"core.hooksPath={os.devnull}",
+    "-c", "gpg.program=false",
+    "-c", "log.showSignature=false",
+    "-c", "diff.external=",
+    "-c", "core.pager=cat",
+    "--no-pager",
+)  # fmt: skip
+
+#: Added to the environment of every git call.
+GIT_SAFETY_ENV: dict[str, str] = {
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_TERMINAL_PROMPT": "0",
+    "GIT_OPTIONAL_LOCKS": "0",
+}
+
+
+def owned_by_current_user(path: str) -> bool:
+    """Whether *path* is a directory owned by the user running the reporter.
+
+    On Windows there are no POSIX owners; git's own ``safe.directory`` check
+    (which this tool never overrides) does the ownership test there.
+    """
+    try:
+        info = os.stat(path)
+    except OSError:
+        return False
+    if not os.path.isdir(path):
+        return False
+    getuid = getattr(os, "getuid", None)
+    if sys.platform.startswith("win") or getuid is None:
+        return True
+    return bool(info.st_uid == getuid())
+
+
+def git_command(git: str, cwd: str, args: Sequence[str]) -> list[str]:
+    return [git, *GIT_SAFETY_OPTIONS, "-C", cwd, *args]
+
+
 def run_git(args: Sequence[str], cwd: str) -> str | None:
-    """Run ``git -C <cwd> <args>``; ``None`` on any failure."""
+    """Run a read-only, hardened ``git -C <cwd> <args>``; ``None`` on any failure or refusal."""
     git = shutil.which("git")
-    if git is None or not Path(cwd).is_dir():
+    if git is None or not owned_by_current_user(cwd):
         return None
+    env = {**os.environ, **GIT_SAFETY_ENV}
     try:
         result = subprocess.run(
-            [git, "-C", cwd, *args],
+            git_command(git, cwd, args),
             capture_output=True,
             text=True,
             timeout=GIT_TIMEOUT_SECONDS,
             check=False,
             stdin=subprocess.DEVNULL,
+            env=env,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -88,6 +141,7 @@ class GitInfo:
         out = self.runner(
             [
                 "log",
+                "--no-show-signature",
                 "--all",
                 f"--since={start.isoformat()}",
                 f"--until={(end + COMMIT_GRACE).isoformat()}",
