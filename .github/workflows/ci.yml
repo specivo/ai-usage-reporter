@@ -38,3 +38,30 @@ jobs:
       - run: uv pip install --python /tmp/clean dist/*.whl
       - run: /tmp/clean/bin/ai-usage --version
       - run: /tmp/clean/bin/python -c "import ai_usage_reporter.cli, ai_usage_reporter.testing"
+      - run: >-
+          /tmp/clean/bin/python -c "import ai_usage_reporter.hooks.runner, ai_usage_reporter.schedule,
+          ai_usage_reporter.importers.ccusage, ai_usage_reporter.adapters.opencode, ai_usage_reporter.adapters.gemini_cli"
+
+  # Install and remove a real schedule. Task Scheduler works on the Windows runner; launchd and a
+  # systemd user session may be missing on hosted runners, so those two only report.
+  schedule:
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os != 'windows-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked
+      - run: uv run ai-usage schedule install --every 30
+      - name: The schedule exists
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Windows) schtasks /Query /TN SpecivoAIUsageReporter ;;
+            macOS) launchctl print "gui/$(id -u)/io.specivo.ai-usage-reporter" >/dev/null ;;
+            Linux) systemctl --user list-timers ai-usage-reporter.timer | grep -q ai-usage-reporter ;;
+          esac
+      - run: uv run ai-usage schedule remove

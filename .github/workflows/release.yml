@@ -22,18 +22,26 @@ jobs:
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
           test "v${version}" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != v${version}"; exit 1; }
       - run: uv build
+      - name: Release notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          {
+            echo "Install:"
+            echo
+            echo '```bash'
+            echo "uv tool install git+https://github.com/specivo/ai-usage-reporter@${GITHUB_REF_NAME}"
+            echo '```'
+            echo
+            awk -v v="## ${version}" '$0 == v {on = 1; next} /^## / {on = 0} on' CHANGELOG.md
+            echo
+            echo 'Speaks the Specivo AI usage ingest contract `specivo.ai-usage.v1`.'
+          } > release-notes.md
+          grep -q . <(awk -v v="## ${version}" '$0 == v {on = 1; next} /^## / {on = 0} on' CHANGELOG.md) \
+            || { echo "CHANGELOG.md has no section for ${version}"; exit 1; }
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/*.whl
             dist/*.tar.gz
-          generate_release_notes: true
-          body: |
-            Install:
-
-            ```bash
-            uv tool install git+https://github.com/specivo/ai-usage-reporter@${{ github.ref_name }}
-            ```
-
-            Speaks the Specivo AI usage ingest contract `specivo.ai-usage.v1`.
+          body_path: release-notes.md

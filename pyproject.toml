@@ -1,13 +1,13 @@
 [project]
 name = "specivo-ai-usage-reporter"
-version = "0.1.0"
+version = "0.2.0"
 description = "Read the local logs of AI coding tools and report their token usage to Specivo, privately"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11"
 authors = [{ name = "Specivo" }]
-keywords = ["specivo", "ai-usage", "claude-code", "codex", "tokens", "cost-tracking"]
+keywords = ["specivo", "ai-usage", "claude-code", "codex", "gemini-cli", "opencode", "ccusage", "tokens", "cost-tracking"]
 # Standard library only at runtime. The extras are optional.
 dependencies = []
 classifiers = [

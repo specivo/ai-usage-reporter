@@ -1,5 +1,5 @@
 ---
-description: Report the token usage of Claude Code and Codex to Specivo with the open-source ai-usage reporter. Counts and ids only; prompts, code and paths stay on your machine.
+description: Report the token usage of Claude Code, Codex, Gemini CLI, OpenCode and the tools ccusage reads to Specivo with the open-source ai-usage reporter. Counts and ids only; prompts, code and paths stay on your machine.
 ---
 
 # AI usage reporter
@@ -22,8 +22,27 @@ the AI usage ingest contract `specivo.ai-usage.v1`, so it needs Specivo 0.13.0 o
 |---|---|---|
 | Claude Code (`claude-code`) | `~/.claude/projects/` and `~/.config/claude/projects/`; `CLAUDE_CONFIG_DIR` moves them | Subagent work counts in the parent session; repeated copies of a response count once |
 | Codex CLI (`codex`) | `~/.codex/sessions/` and `~/.codex/archived_sessions/`; `CODEX_HOME` moves them | Active rollouts win over archived copies; compressed rollouts need the `zstd` extra before Python 3.14 |
+| Gemini CLI (`gemini-cli`) | `~/.gemini/tmp/<project>/chats/` (and `~/.cache/.gemini` under the macOS sandbox), JSON and JSONL recordings | Cached prompt tokens are reported as cache reads, thoughts as reasoning; subagents count in their parent session |
+| OpenCode (`opencode`) | `opencode.db` in `~/.local/share/opencode/` (`XDG_DATA_HOME` and `OPENCODE_DB` move it), and the older `storage/` JSON files | Read-only, never locked; child sessions count in their root session; OpenCode's cost is sent as the reported cost |
+| Others, through [ccusage](https://ccusage.com) | the JSON of `ccusage daily --by-agent --json` | Day totals per tool and model; see [Import ccusage](#import-ccusage) |
 
 More tools can be added as plugins (see [Writing an adapter](#writing-an-adapter)).
+
+### How the token classes are read
+
+Specivo counts every token in exactly one class: `input` without the cache, `output` without
+reasoning, cache writes, cache reads and reasoning.
+
+- **Claude Code** logs them that way already.
+- **Codex** counts cached input inside its input and reasoning inside its output; both are moved
+  to their own classes.
+- **Gemini CLI** counts the cached part of the prompt inside `input` (it is moved to cache reads),
+  logs `thoughts` apart from the output (reported as reasoning), and logs the prompt of tool-use
+  calls apart from `input` (it is added to input).
+- **OpenCode** stores disjoint classes already: `input` without cache reads and writes, `output`
+  without `reasoning`. Its single cache-write count is reported as 5-minute cache writes.
+- **ccusage** reports input without the cache; its cache creation is reported as 5-minute cache
+  writes. It has no reasoning class and no request counts.
 
 ## Install
 
@@ -80,30 +99,116 @@ it never adds them up.
 
 | Option | Meaning |
 |---|---|
-| `--source NAME` | Only `claude-code` or `codex` (repeatable) |
-| `--session ID` | Only this session |
+| `--source NAME` | Only `claude-code`, `codex`, `gemini-cli` or `opencode` (repeatable) |
+| `--session ID` | Only this session (a subagent's session id selects its parent session) |
 | `--since YYYY-MM-DD` | Only UTC days on or after this date |
 | `--dry-run` | Print the records instead of sending them; nothing is written locally either |
 | `--sink json --output FILE` | Write the batch to a file |
 | `--retry-rejected` | Send records again that the server refused before |
 | `--no-git` | Do not ask `git` for repository and commit hints |
 
+### From the tools' hooks
+
+`ai-usage hooks install --tool <tool>` makes a tool push each session itself (`--tool all` for
+every one, `uninstall` to take it out again):
+
+| Tool | Installed into | Runs |
+|---|---|---|
+| Claude Code | `settings.json` in `~/.claude` (or `CLAUDE_CONFIG_DIR`): a command hook on `SessionEnd` and `Stop` | `ai-usage hook claude-code`, which reads `session_id` from the hook's input |
+| Codex CLI | `config.toml` in `~/.codex` (or `CODEX_HOME`): the `notify` program, on `agent-turn-complete` | `ai-usage hook codex`, which reads `thread-id` from the notification |
+| Gemini CLI | `~/.gemini/settings.json`: a command hook on `SessionEnd` and `AfterAgent` | `ai-usage hook gemini-cli`, which reads `session_id` from the hook's input |
+| OpenCode | `~/.config/opencode/plugins/specivo-ai-usage-reporter.js` (`XDG_CONFIG_HOME` moves it) | `ai-usage push --source opencode --session <id>` when a session goes idle |
+
+How they behave:
+
+- **Fast and fail-open.** The hook starts the push in the background and returns at once, always
+  with exit code 0, so it never blocks or slows the tool. The push writes a short summary (counts
+  and statuses, no content) to `hooks.log` in the state directory.
+- **Debounced.** Turn events come often. A push waits 30 seconds (20 in OpenCode) and runs only if
+  no later turn of the same session came in meanwhile, so a burst of turns makes one push. A
+  session end pushes at once.
+- **Safe edits.** Only the reporter's own entry is added or removed; your other hooks and settings
+  stay as they are. A file is copied to `<name>.ai-usage-backup-<time>` before it changes (for
+  OpenCode, into `~/.config/opencode/ai-usage-backups/`), and installing twice changes nothing.
+  A settings file with comments is left alone with a message.
+- **Codex has one `notify` program.** If you have one, the reporter's hook runs it too, with the
+  same notification, and `uninstall` puts yours back.
+- **`SPECIVO_ISSUE`** set where you start the tool reaches the push, and the session is attributed
+  to that issue. Gemini CLI runs hooks with a reduced environment, so there it may not arrive.
+- Gemini CLI's `/hooks` command lists the installed hook and can switch it off.
+- The hooks name the reporter by its full path. After reinstalling the reporter somewhere else,
+  run `ai-usage hooks install` again.
+
 ### On a timer
 
-Session hooks for Claude Code and Codex are planned. Until then, run `push` on a timer, for
-example every 30 minutes:
+Hooks miss sessions that never end cleanly, so also push on a timer:
 
-=== "cron (Linux, macOS)"
+```bash
+ai-usage schedule install           # every 30 minutes
+ai-usage schedule install --every 15
+ai-usage schedule remove
+```
 
-    ```cron
-    */30 * * * * ai-usage push >/dev/null 2>&1
-    ```
+| System | What is set up |
+|---|---|
+| macOS | a launchd agent `~/Library/LaunchAgents/io.specivo.ai-usage-reporter.plist`, loaded with `launchctl bootstrap` |
+| Linux | a systemd user timer `ai-usage-reporter.timer` (and `.service`) in `~/.config/systemd/user`, enabled with `systemctl --user enable --now` |
+| Windows | a Task Scheduler task `SpecivoAIUsageReporter` (`schtasks /Create`) |
 
-=== "Task Scheduler (Windows)"
+`--kind launchd|systemd|schtasks` picks another one. The push writes to `schedule.log` in the state
+directory. A systemd user timer only runs while you are logged in, unless lingering is on
+(`loginctl enable-linger`).
 
-    ```powershell
-    schtasks /Create /SC MINUTE /MO 30 /TN "ai-usage push" /TR "ai-usage push"
-    ```
+With cron instead:
+
+```cron
+*/30 * * * * /full/path/to/ai-usage push >/dev/null 2>&1
+```
+
+cron starts with a short `PATH`, so use the full path of `ai-usage` (`which ai-usage`).
+
+#### Checking a schedule by hand
+
+The installers are tested with the system commands recorded, not run. To check one on a real
+machine:
+
+1. `ai-usage schedule install --every 5`, then wait five minutes.
+2. `ai-usage status` shows a new "last push"; `schedule.log` in the state directory has its output.
+3. macOS: `launchctl print gui/$(id -u)/io.specivo.ai-usage-reporter` shows the agent.
+   Linux: `systemctl --user list-timers ai-usage-reporter.timer` shows the next run.
+   Windows: `schtasks /Query /TN SpecivoAIUsageReporter` shows the task.
+4. `ai-usage schedule remove`; the same commands then find nothing.
+
+## Import ccusage
+
+[ccusage](https://ccusage.com) reads the logs of many AI tools. `ai-usage import ccusage` sends its
+daily report, so those tools are covered at day granularity:
+
+```bash
+ccusage daily --by-agent --json > usage.json
+ai-usage import ccusage usage.json --dry-run    # look first
+ai-usage import ccusage usage.json
+# or: ccusage daily --by-agent --json | ai-usage import ccusage
+```
+
+- One record per tool, model and day, without a session or request count. ccusage's agent names
+  become tool slugs (`claude` is `claude-code`, `gemini` is `gemini-cli`, others as they are).
+  Rows without an agent count for `--default-agent` (`claude`).
+- Importing the same days again replaces their totals.
+- ccusage's own cost estimate is not sent; Specivo prices the tokens.
+- Buckets are UTC days. Run ccusage in UTC (its `--timezone UTC` option, where your version has
+  it), or days near midnight land on your local date.
+- **One source per tool.** A tool is counted either from its own logs or from the import, never
+  both. Rows of tools the reporter reads itself are skipped (the import says how many). To count a
+  tool through ccusage instead, set `via = "ccusage"`:
+
+  ```toml
+  [sources.gemini-cli]
+  via = "ccusage"
+  ```
+
+  `push` then leaves that tool's logs alone. Records already sent by the other route stay in
+  Specivo under their own keys; delete them there if you switch a tool over.
 
 ## Which issue the usage counts for
 
@@ -155,6 +260,10 @@ cost_type = "api"
 Without a rule, Specivo uses `subscription` when you have an AI subscription covering the tool,
 and `unknown` otherwise.
 
+When a tool logs what each request cost (OpenCode does, in US dollars), the bucket's sum is sent
+as `reported_cost`, but only when every request of the bucket has a cost and the sum is above
+zero. Specivo uses it as the spend of `api` usage and keeps it for the others.
+
 ### Long context
 
 Some models bill a whole request at higher rates once its context (input plus cache reads and
@@ -166,7 +275,9 @@ writes) passes a threshold. The reporter cannot see Specivo's price table, so li
 "example-model-*" = 200000
 ```
 
-A request above the threshold is then reported in `long_context_tokens` instead of `tokens`.
+A request above the threshold is then reported in `long_context_tokens` instead of `tokens`. The
+two never overlap: each request's tokens are in exactly one of them, and their sum is the bucket's
+usage.
 
 ## Reporting for a teammate
 
@@ -217,7 +328,7 @@ your repositories in `[projects]` to get the precise reasons.
 | `on_behalf_of` | The login usage is reported for (service accounts) |
 | `git_commits` | Add SHAs of your commits made during the session (default `true`; needs `git_enrichment`) |
 | `exclude_paths` | Sessions that ran in these directories are never reported |
-| `[sources.<name>]` | `enabled = false` turns a source off; `roots = [...]` reads other directories |
+| `[sources.<name>]` | `enabled = false` turns a source off; `roots = [...]` reads other directories; `via = "ccusage"` counts the tool through `import ccusage` instead of its logs |
 | `[[cost_rules]]` | `tool`, `model`, `repo` (patterns) → `cost_type`, `subscription_hint`; the first match wins |
 | `[projects]` | Repository pattern (`host/owner/repo`) → Specivo project key |
 | `[long_context]` | Model pattern → long-context threshold in tokens |
@@ -235,6 +346,8 @@ your repositories in `[projects]` to get the precise reasons.
 | Records refused with `key_conflict` | Another account already reported these buckets for you; use one reporter per person |
 | `push` exits with status 1 | Some records are waiting for a retry (server busy or offline); the next push sends them |
 | Codex rollouts are skipped | Install the `zstd` extra |
+| `doctor` says an OpenCode database is busy | OpenCode was writing; the next push reads it |
+| A hook does not seem to run | Look at `hooks.log` in the state directory; run `ai-usage hooks install --tool <tool>` again after moving the reporter |
 
 ## Writing an adapter
 

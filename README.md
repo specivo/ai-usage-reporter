@@ -5,7 +5,8 @@ to [Specivo](https://specivo.io): tokens by class, requests, the model, the sess
 the issue the work was for. Specivo prices the usage, shows it next to the time logged on issues
 and adds it to the project's spend reports.
 
-- Reads **Claude Code** and **Codex CLI** logs. Other tools can be added as plugins.
+- Reads **Claude Code**, **Codex CLI**, **Gemini CLI** and **OpenCode** logs, and imports the
+  daily report of [ccusage](https://ccusage.com) for other tools. More tools can be added as plugins.
 - Speaks the Specivo AI usage ingest contract `specivo.ai-usage.v1` (Specivo 0.13.0 or later).
 - Python 3.11 or later, standard library only. macOS, Linux and Windows.
 - Sends counts and ids only. Prompts, code, tool output and file paths never leave your machine
@@ -13,12 +14,13 @@ and adds it to the project's spend reports.
 
 Full documentation: <https://specivo.io/docs/ai-usage-reporter/> (the Markdown sources are in [`docs/`](docs/)).
 
-Claude Code is a product of Anthropic and Codex of OpenAI. This tool is not affiliated with or
-endorsed by either; their names only say which logs it reads.
+Claude Code is a product of Anthropic, Codex of OpenAI, Gemini CLI of Google, and OpenCode and
+ccusage are open-source projects. This tool is not affiliated with or endorsed by any of them; their
+names only say which logs it reads.
 
 ## Install
 
-From a release (there is no PyPI package):
+From a release (there is no PyPI package; [CHANGELOG.md](CHANGELOG.md) lists what each one brings):
 
 ```bash
 uv tool install git+https://github.com/specivo/ai-usage-reporter@vX.Y.Z
@@ -59,7 +61,7 @@ uv tool install "specivo-ai-usage-reporter[keyring,zstd] @ git+https://github.co
 
 | Option | Meaning |
 |---|---|
-| `--source claude-code` | Only this source (repeatable) |
+| `--source claude-code` | Only this source (repeatable): `claude-code`, `codex`, `gemini-cli`, `opencode` |
 | `--session ID` | Only this session. With `SPECIVO_ISSUE=ACME-12` set, the session is attributed to that issue, now and in later pushes |
 | `--since 2026-10-01` | Only UTC days on or after this date |
 | `--dry-run` | Print the records instead of sending them; nothing is written |
@@ -67,15 +69,50 @@ uv tool install "specivo-ai-usage-reporter[keyring,zstd] @ git+https://github.co
 | `--retry-rejected` | Send records again that the server refused before |
 | `--no-git` | Do not run `git` for repository and commit hints |
 
-Run `ai-usage push` after work, or on a timer (every 30 minutes is plenty). Sending is
-idempotent: a bucket is sent again only when its totals or hints changed, and the server replaces
-the totals of a bucket instead of adding to them. Session hooks for Claude Code and Codex come in
-a later release; until then, use cron, a systemd user timer, launchd or Task Scheduler. For
-example, with cron:
+Sending is idempotent: a bucket is sent again only when its totals or hints changed, and the
+server replaces the totals of a bucket instead of adding to them, so push as often as you like.
 
-```cron
-*/30 * * * * ai-usage push >/dev/null 2>&1
+## Push automatically
+
+Let the tools push each session when it ends or goes idle:
+
+```bash
+ai-usage hooks install --tool claude-code   # also: codex, gemini-cli, opencode, all
+ai-usage hooks uninstall --tool claude-code
 ```
+
+| Tool | What is installed | When it pushes |
+|---|---|---|
+| Claude Code | a command hook in `~/.claude/settings.json` | `SessionEnd`, and 30 s after the last `Stop` |
+| Codex CLI | the `notify` program in `~/.codex/config.toml` (an existing one keeps running) | 30 s after the last turn |
+| Gemini CLI | a command hook in `~/.gemini/settings.json` | `SessionEnd`, and 30 s after the last `AfterAgent` |
+| OpenCode | a plugin file in `~/.config/opencode/plugins/` | 20 s after the session goes idle |
+
+Hooks return at once and never fail the tool: the push runs in the background. Every file is
+backed up before it is changed, and installing twice changes nothing.
+
+And as a safety net, push on a timer (launchd on macOS, a systemd user timer on Linux, Task
+Scheduler on Windows):
+
+```bash
+ai-usage schedule install            # every 30 minutes; --every 15 for another interval
+ai-usage schedule remove
+```
+
+With cron instead: `*/30 * * * * ai-usage push >/dev/null 2>&1`.
+
+## Other tools: import ccusage
+
+[ccusage](https://ccusage.com) reads the logs of many more tools. Its daily report can be imported
+at day granularity:
+
+```bash
+ccusage daily --by-agent --json | ai-usage import ccusage
+```
+
+A tool is counted by its own adapter or by the import, never both. Rows of tools the reporter reads
+itself are skipped; `[sources.<tool>] via = "ccusage"` hands a tool over to the import (and stops
+`push` from reading its logs).
 
 ## What is sent
 
@@ -86,6 +123,7 @@ that runs past midnight UTC, or switches models, becomes several records. Each r
   `cache_write_1h`, `cache_read`, `reasoning`) and the number of requests;
 - the tool and its version, the provider and the model;
 - the tool's session id (an opaque id; anything else is replaced by a hash);
+- the cost the tool reported, when it reports one for every request of the bucket (OpenCode);
 - the first and last request of the bucket, as UTC timestamps;
 - attribution hints: the issue from `SPECIVO_ISSUE`, the git branch, the repository as
   `host/owner/repo` (never a path, never credentials), SHAs of commits you made during the session,
@@ -93,8 +131,8 @@ that runs past midnight UTC, or switches models, becomes several records. Each r
 - cost hints from your config (`cost_type`, `subscription_hint`) and `on_behalf_of` for service
   accounts.
 
-Subagent work (Claude Code's Task tool and other sidechains) is counted in its parent session, so
-a session's total includes what it fanned out.
+Subagent work (Claude Code's Task tool and sidechains, Gemini CLI subagents, OpenCode child
+sessions) is counted in its parent session, so a session's total includes what it fanned out.
 
 ## Privacy
 
@@ -133,6 +171,12 @@ subscription_hint = "claude-max-20x"
 
 [projects]
 "github.com/acme/*" = "ACME"
+
+[sources.opencode]
+roots = ["~/.local/share/opencode"]  # the default; XDG_DATA_HOME moves it
+
+[sources.gemini-cli]
+via = "ccusage"                      # count Gemini CLI through "ai-usage import ccusage" instead
 ```
 
 ## Writing an adapter

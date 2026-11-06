@@ -9,7 +9,7 @@ from __future__ import annotations
 
 __all__ = ["CLIENT_NAME", "CONTRACT_VERSION", "__version__"]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 #: Sent as ``client.name`` in every batch.
 CLIENT_NAME = "ai-usage-reporter"

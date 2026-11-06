@@ -61,9 +61,36 @@ class Adapter(Protocol):
 - [ ] Repeated records of one request (streaming updates, replays) set `is_replay` and
       `replay_key` when the format marks them; the shared deduplication drops them.
 - [ ] Subagent or child sessions are reported under the parent session's id when the format
-      links them.
+      links them, with the child's own id in `sub_session_id` (so `push --session <child>`, which a
+      hook may call, selects the parent session).
+- [ ] When the tool logs what a request cost, set `cost` (a decimal string) and `cost_currency`
+      (ISO 4217). A bucket sends `reported_cost` only when all its requests have one.
 - [ ] Bump `parser_version` whenever parsing changes; the reporter then parses every file of the
       adapter again.
+
+### Databases
+
+Some tools keep their history in SQLite (OpenCode does). Treat the database as someone else's:
+
+- [ ] Open it read-only (`file:...?mode=ro` as a URI), run a few short `SELECT`s, close it. Never
+      write, never checkpoint the write-ahead log, never keep a transaction open.
+- [ ] One database is one `SourceFile`. List its `-wal` file in `companions`, so a change that is
+      still only in the log makes the reporter read the database again.
+- [ ] When the tool holds a lock, retry briefly and then raise `SourceBusyError`: the file is
+      skipped, not cached, and read on the next run; `doctor` shows it as busy.
+- [ ] Check which tables and columns exist (`PRAGMA table_info`) before you read them, and read
+      the older layouts the tool migrated from when it is cheap.
+- [ ] Build the fixture database in the test (see `tests/fixtures/opencode_home.py`) rather than
+      committing a binary file.
+
+### Hooks
+
+If the tool can run a program when a session ends, add an installer under
+`ai_usage_reporter/hooks/` and the tool to `HOOK_TOOLS`. Installers take every location from the
+injected `home` and `env`, change only their own entry, back a file up before changing it, are
+idempotent, and refuse (with `HookError`) to touch a file they cannot parse. What the tool runs
+must always exit 0 and return at once; `ai-usage hook <tool>` does that for tools that pass the
+session id on standard input or as an argument.
 
 ### Privacy
 
@@ -112,7 +139,7 @@ line: every number in it should be one you can explain from the fixture.
 ### Documentation
 
 - [ ] Describe the log layout and every rule the adapter applies in the module docstring.
-- [ ] Add the tool to the "What it reads" table in `docs/index.md`.
+- [ ] Add the tool to the "What it reads" table and the token-class list in `docs/index.md`.
 - [ ] Before opening a pull request, run `ai-usage push --dry-run` against real logs of the tool
       on your own machine and check the counts. Do not paste its output anywhere: it contains
       your session ids and branch names.
