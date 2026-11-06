@@ -56,6 +56,8 @@ dev = [
     "pytest>=8.3",
     "ruff>=0.8",
     "types-jsonschema>=4.23",
+    # zoneinfo has no time zone database on Windows without it.
+    "tzdata>=2024.1; sys_platform == 'win32'",
     "zstandard>=0.22",
 ]
 
