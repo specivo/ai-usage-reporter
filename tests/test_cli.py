@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from ai_usage_reporter import cli
+from ai_usage_reporter import schedule as schedule_module
 from ai_usage_reporter.sinks.specivo import SpecivoSink
 from ai_usage_reporter.testing import validate_records
 from tests.conftest import FakeServer, ok, result_item
@@ -128,3 +129,57 @@ def test_errors_are_short(env: dict[str, Path], capsys: pytest.CaptureFixture[st
     assert cli.main(["push", "--since", "yesterday"]) == 2
     _, err = capsys.readouterr()
     assert "unknown source" in err and "--since" in err
+
+
+def test_hooks_install_and_uninstall_touch_only_the_temporary_home(
+    isolated_home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert cli.main(["hooks", "install", "--tool", "all"]) == 0
+    assert (isolated_home / ".claude" / "settings.json").exists()
+    assert (isolated_home / ".codex" / "config.toml").exists()
+    assert (isolated_home / ".gemini" / "settings.json").exists()
+    assert (isolated_home / "xdg_config_home" / "opencode" / "plugins" / "specivo-ai-usage-reporter.js").exists()
+    assert cli.main(["hooks", "install", "--tool", "codex"]) == 0
+    out, _ = capsys.readouterr()
+    assert "codex: unchanged" in out
+    assert cli.main(["hooks", "uninstall", "--tool", "all"]) == 0
+    assert not (isolated_home / ".codex" / "config.toml").exists()
+
+
+def test_hook_command_never_fails(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr("sys.stdin", io.StringIO("not json"))
+    assert cli.main(["hook", "claude-code", "--bogus-option"]) == 0
+    assert cli.main(["hook"]) == 0
+    out, err = capsys.readouterr()
+    assert out == "" and err == ""
+
+
+def test_schedule_runs_the_system_commands(
+    isolated_home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: list[list[str]] = []
+
+    def run(argv: list[str]) -> int:
+        calls.append(list(argv))
+        return 0
+
+    monkeypatch.setattr(schedule_module, "run_command", run)
+    assert cli.main(["schedule", "install", "--kind", "systemd", "--every", "20"]) == 0
+    assert calls[-1][-1] == "ai-usage-reporter.timer"
+    timer = isolated_home / "xdg_config_home" / "systemd" / "user" / "ai-usage-reporter.timer"
+    assert "OnUnitActiveSec=20min" in timer.read_text()
+    assert cli.main(["schedule", "remove", "--kind", "systemd"]) == 0
+    assert not timer.exists()
+    assert cli.main(["schedule", "install", "--every", "2"]) == 2
+
+
+def test_via_ccusage_keeps_push_away_from_the_tool(env: dict[str, Path], capsys: pytest.CaptureFixture[str]) -> None:
+    (env["config"] / "config.toml").write_text(
+        'url = "https://specivo.example.com"\n[sources.codex]\nvia = "ccusage"\n', encoding="utf-8"
+    )
+    assert cli.main(["push", "--dry-run", "--no-git", "--source", "codex"]) == 0
+    out, _ = capsys.readouterr()
+    assert json.loads(out)["records"] == []
+    assert cli.main(["doctor", "--offline"]) in (0, 1)
+    out, _ = capsys.readouterr()
+    assert "instead of their logs: codex" in out

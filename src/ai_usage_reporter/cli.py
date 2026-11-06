@@ -1,4 +1,8 @@
-"""The ``ai-usage`` command line: ``init``, ``push``, ``status``, ``doctor``, ``show-payload``.
+"""The ``ai-usage`` command line.
+
+``init``, ``push``, ``status``, ``doctor``, ``show-payload``, ``import ccusage``,
+``hooks install|uninstall``, ``schedule install|remove``, and ``hook`` /
+``hook-push``, which the AI tools' hooks run.
 
 Nothing printed here contains a prompt, tool output, a transcript path or a
 working directory. ``show-payload`` and ``push --dry-run`` print exactly the
@@ -19,6 +23,7 @@ from pathlib import Path
 from typing import TextIO
 
 from ai_usage_reporter import CONTRACT_VERSION, __version__
+from ai_usage_reporter import schedule as schedules
 from ai_usage_reporter.adapters import load_adapters
 from ai_usage_reporter.adapters._jsonl import zstd_available
 from ai_usage_reporter.apikey import KeyFileError, keyring_available, resolve_api_key, store_api_key
@@ -33,7 +38,13 @@ from ai_usage_reporter.config import (
     state_dir,
 )
 from ai_usage_reporter.enrich import GitInfo
-from ai_usage_reporter.pipeline import Collected, Selection, collect, deliver
+from ai_usage_reporter.hooks import HOOK_TOOLS, HookContext, HookError
+from ai_usage_reporter.hooks import install as install_hook
+from ai_usage_reporter.hooks import uninstall as uninstall_hook
+from ai_usage_reporter.hooks.runner import run_hook, run_hook_push
+from ai_usage_reporter.importers.ccusage import CcusageFormatError, import_report
+from ai_usage_reporter.pipeline import Collected, Selection, collect, deliver, native_sources
+from ai_usage_reporter.schedule import KINDS, ScheduleContext, ScheduleError, default_kind
 from ai_usage_reporter.sinks import Sink, SinkContext, make_batch, plugin_sinks
 from ai_usage_reporter.sinks.json_sink import JsonSink
 from ai_usage_reporter.sinks.specivo import SinkError, SpecivoSink
@@ -108,9 +119,10 @@ def _git(args: argparse.Namespace, config: Config) -> GitInfo | None:
 
 def _print_collection(collected: Collected, out: TextIO) -> None:
     for report in collected.reports.values():
+        busy = f", {report.busy_files} busy (read next time)" if report.busy_files else ""
         print(
             f"{report.name}: {report.files} files ({report.parsed} parsed, {report.reused} unchanged),"
-            f" {report.after_dedup} requests after dedup, {report.malformed_lines} malformed lines",
+            f" {report.after_dedup} requests after dedup, {report.malformed_lines} malformed lines{busy}",
             file=out,
         )
     print(f"{len(collected.records)} records", file=out)
@@ -352,6 +364,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             f" {report.skipped_events} unusable usage lines, {report.failed_files} unreadable files"
         )
         print(f"  {report.events} requests, {report.after_dedup} after dedup, {report.excluded} excluded")
+        if report.busy_files:
+            print(f"  {report.busy_files} files locked by the tool right now; they are read on the next run")
+    imported = sorted(n for n, s in config.sources.items() if s.via == "ccusage")
+    if imported:
+        print(f"read through 'ai-usage import ccusage' instead of their logs: {', '.join(imported)}")
     print(f"records that would be sent: {len(collected.records)}")
     if config.url and key is not None and not args.offline:
         try:
@@ -386,11 +403,134 @@ def _tilde(path: str) -> str:
     return "~" + path[len(home) :] if path.startswith(home) else path
 
 
+def cmd_import_ccusage(args: argparse.Namespace) -> int:
+    config, cfg_path, state_path = _load(args)
+    try:
+        if args.file in (None, "-"):
+            text = sys.stdin.read()
+        else:
+            text = Path(args.file).read_text(encoding="utf-8")
+        report = json.loads(text)
+    except OSError as exc:
+        raise CliError(f"cannot read the report: {exc.strerror}") from None
+    except ValueError:
+        raise CliError("the report is not JSON; run 'ccusage daily --by-agent --json'") from None
+    try:
+        result = import_report(
+            report, config, native_sources(config, load_adapters()), default_agent=args.default_agent
+        )
+    except CcusageFormatError as exc:
+        raise CliError(str(exc)) from None
+    summary = (
+        f"ccusage: {result.rows} rows, {len(result.records)} records, {result.malformed_rows} malformed rows"
+        + (f", {result.too_old} too old" if result.too_old else "")
+        + (f", {result.in_future} in the future" if result.in_future else "")
+    )
+    skipped = ", ".join(f"{tool} {n}" for tool, n in sorted(result.skipped_tools.items()))
+    sink = _make_sink(args, config, cfg_path)
+    wires = [r.to_wire() for r in result.records]
+    if args.dry_run or not sink.records_state:
+        if wires:
+            sink.send(wires)
+        print(summary, file=sys.stderr)
+    else:
+        with State(state_path) as state:
+            run = state.start_run(sink.name)
+            try:
+                delivered = deliver(
+                    result.records, sink, state, retry_rejected=args.retry_rejected, include_queue=False
+                )
+            except SinkError as exc:
+                state.finish_run(run, {"error": str(exc)})
+                state.commit()
+                raise CliError(str(exc)) from None
+            state.finish_run(run, delivered.as_dict())
+            state.commit()
+        statuses = ", ".join(f"{k} {v}" for k, v in sorted(delivered.statuses.items())) or "nothing to send"
+        print(
+            f"{summary}; sent {delivered.sent} ({statuses}), {delivered.skipped_unchanged} unchanged", file=sys.stderr
+        )
+    if skipped:
+        print(
+            f"skipped rows of tools read from their own logs: {skipped}"
+            ' (set [sources.<tool>] via = "ccusage" to import them instead)',
+            file=sys.stderr,
+        )
+    return 0
+
+
+def _tools(args: argparse.Namespace) -> list[str]:
+    chosen: list[str] = []
+    for tool in args.tool:
+        for name in HOOK_TOOLS if tool == "all" else [tool]:
+            if name not in chosen:
+                chosen.append(name)
+    return chosen
+
+
+def cmd_hooks(args: argparse.Namespace) -> int:
+    ctx = HookContext.from_environment()
+    problems = 0
+    for tool in _tools(args):
+        try:
+            change = install_hook(tool, ctx) if args.action == "install" else uninstall_hook(tool, ctx)
+        except (HookError, OSError) as exc:
+            print(f"{tool}: {exc}", file=sys.stderr)
+            problems += 1
+            continue
+        line = f"{tool}: {change.action} ({_tilde(str(change.path))})"
+        if change.backup is not None:
+            line += f"; backup {change.backup.name}"
+        print(line)
+    return 1 if problems else 0
+
+
+def cmd_schedule(args: argparse.Namespace) -> int:
+    kind = args.kind or default_kind()
+    ctx = ScheduleContext(
+        home=Path.home(),
+        env=dict(os.environ),
+        command=tuple(HookContext.from_environment().command),
+        log=state_dir() / "schedule.log",
+        run=schedules.run_command,
+    )
+    try:
+        if args.action == "install":
+            result = schedules.install(ctx, kind, args.every)
+        else:
+            result = schedules.remove(ctx, kind)
+    except (ScheduleError, OSError) as exc:
+        raise CliError(str(exc)) from None
+    detail = f" every {args.every} minutes" if args.action == "install" else ""
+    print(f"{kind}: {result.action}{detail}")
+    for path in result.files:
+        print(f"  {_tilde(str(path))}")
+    for command in result.failed:
+        print(f"  failed: {command}", file=sys.stderr)
+    return 1 if result.failed else 0
+
+
+def cmd_hook_push(args: argparse.Namespace) -> int:
+    return run_hook_push(args.tool, args.session, args.nonce, args.delay, state=state_dir(), push=main)
+
+
+def hook_main(argv: Sequence[str]) -> int:
+    """``ai-usage hook <tool> ...``, run by the AI tools. Never fails, never blocks."""
+    try:
+        tool = argv[0] if argv else ""
+        command = HookContext.from_environment().command
+        return run_hook(tool, argv[1:], stdin=sys.stdin, stdout=sys.stdout, command=command, state=state_dir())
+    except Exception:
+        return 0
+
+
 # -- parser ----------------------------------------------------------------------
 
 
 def _selection_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--source", action="append", help="only this source (repeatable): claude-code, codex, ...")
+    parser.add_argument(
+        "--source", action="append", help="only this source (repeatable): claude-code, codex, gemini-cli, opencode"
+    )
     parser.add_argument("--session", help="only this session id")
     parser.add_argument("--since", help="only buckets on or after this UTC day (YYYY-MM-DD)")
     parser.add_argument("--no-git", action="store_true", help="do not run git for repository and commit hints")
@@ -434,11 +574,54 @@ def build_parser() -> argparse.ArgumentParser:
     show = sub.add_parser("show-payload", help="print exactly what would be sent")
     _selection_args(show)
     show.set_defaults(func=cmd_show_payload)
+
+    imports = sub.add_parser("import", help="import usage reported by another program")
+    imports_sub = imports.add_subparsers(dest="importer", required=True)
+    ccusage = imports_sub.add_parser(
+        "ccusage", help="import 'ccusage daily --by-agent --json' (a file, or - for stdin)"
+    )
+    ccusage.add_argument("file", nargs="?", default="-", help="the JSON report (default: standard input)")
+    ccusage.add_argument(
+        "--default-agent", default="claude", help="the agent of rows without one (default: claude, ccusage's own)"
+    )
+    ccusage.add_argument("--dry-run", action="store_true", help="print the records instead of sending; change nothing")
+    ccusage.add_argument("--sink", default="specivo", help="specivo (default), json or a plugin sink")
+    ccusage.add_argument("--output", help="file for the json sink (default: standard output)")
+    ccusage.add_argument("--retry-rejected", action="store_true", help="send records the server refused before again")
+    ccusage.set_defaults(func=cmd_import_ccusage)
+
+    hooks = sub.add_parser("hooks", help="report each session when it ends, from the AI tool's own hooks")
+    hooks.add_argument("action", choices=("install", "uninstall"))
+    hooks.add_argument(
+        "--tool",
+        action="append",
+        required=True,
+        choices=(*HOOK_TOOLS, "all"),
+        help="the tool whose config to change (repeatable)",
+    )
+    hooks.set_defaults(func=cmd_hooks)
+
+    sched = sub.add_parser("schedule", help="run 'ai-usage push' on a timer")
+    sched.add_argument("action", choices=("install", "remove"))
+    sched.add_argument("--every", type=int, default=schedules.DEFAULT_MINUTES, help="minutes between pushes (30)")
+    sched.add_argument("--kind", choices=KINDS, help="launchd, systemd or schtasks (default: this system's)")
+    sched.set_defaults(func=cmd_schedule)
+
+    hook_push = sub.add_parser("hook-push")  # started by "ai-usage hook"; not for people
+    hook_push.add_argument("--tool", required=True)
+    hook_push.add_argument("--session", required=True)
+    hook_push.add_argument("--nonce", required=True)
+    hook_push.add_argument("--delay", type=float, default=0.0)
+    hook_push.set_defaults(func=cmd_hook_push)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments[:1] == ["hook"]:
+        # Hooks bypass argparse: a usage error must not become exit code 2 ("block") in the tool.
+        return hook_main(arguments[1:])
+    args = build_parser().parse_args(arguments)
     try:
         result: int = args.func(args)
         return result
