@@ -1,0 +1,103 @@
+[
+  {
+    "attribution": {
+      "git_branch": "main"
+    },
+    "ended_at": "2026-10-05T23:41:01Z",
+    "idempotency_key": "6c931e5b694637f3f1f3c30d4d42bae2e14b832f9386054f9cd3239d64f5ad2f",
+    "model": "claude-sonnet-4-5",
+    "provider": "anthropic",
+    "request_count": 1,
+    "session_id": "11111111-1111-4111-8111-111111111111",
+    "started_at": "2026-10-05T23:41:01Z",
+    "tokens": {
+      "cache_read": 2000,
+      "cache_write_1h": 500,
+      "cache_write_5m": 1000,
+      "input": 10,
+      "output": 120
+    },
+    "tool": "claude-code",
+    "tool_version": "2.0.30",
+    "usage_date": "2026-10-05"
+  },
+  {
+    "attribution": {
+      "git_branch": "main"
+    },
+    "ended_at": "2026-10-06T00:06:40Z",
+    "idempotency_key": "b30639c0e9ea1ea862881d4839b2c91d371ab58986d79adb245dc49128b21757",
+    "model": "claude-haiku-4-5",
+    "provider": "anthropic",
+    "request_count": 1,
+    "session_id": "11111111-1111-4111-8111-111111111111",
+    "started_at": "2026-10-06T00:06:40Z",
+    "tokens": {
+      "input": 400,
+      "output": 80
+    },
+    "tool": "claude-code",
+    "tool_version": "2.0.30",
+    "usage_date": "2026-10-06"
+  },
+  {
+    "attribution": {
+      "git_branch": "main"
+    },
+    "ended_at": "2026-10-06T00:06:00Z",
+    "idempotency_key": "fd193c072b73b7777de35c217b1b44b4fe2ab0e52f38b78450f6893916a9249c",
+    "model": "claude-opus-4-6",
+    "provider": "anthropic",
+    "request_count": 1,
+    "session_id": "11111111-1111-4111-8111-111111111111",
+    "started_at": "2026-10-06T00:06:00Z",
+    "tokens": {
+      "cache_read": 100,
+      "input": 900,
+      "output": 40
+    },
+    "tool": "claude-code",
+    "tool_version": "2.0.30",
+    "usage_date": "2026-10-06"
+  },
+  {
+    "attribution": {
+      "git_branch": "main"
+    },
+    "ended_at": "2026-10-06T00:08:00Z",
+    "idempotency_key": "726a5c85596f97fd30d4d9c4a56408138d48883b7c06353a8a6a713da4e0c1de",
+    "model": "claude-sonnet-4-5",
+    "provider": "anthropic",
+    "request_count": 3,
+    "session_id": "11111111-1111-4111-8111-111111111111",
+    "started_at": "2026-10-06T00:05:00Z",
+    "tokens": {
+      "cache_read": 7500,
+      "input": 48,
+      "output": 152
+    },
+    "tool": "claude-code",
+    "tool_version": "2.0.30",
+    "usage_date": "2026-10-06"
+  },
+  {
+    "attribution": {
+      "git_branch": "feat/acme-12-login"
+    },
+    "ended_at": "2026-10-07T03:00:00Z",
+    "idempotency_key": "a1849324c1ced6ccc2024a75f67193eee1b41ac1d8b1babe5b0c4dab94714eb6",
+    "model": "claude-sonnet-4-5",
+    "provider": "anthropic",
+    "request_count": 1,
+    "session_id": "11111111-2222-4111-8111-111111111111",
+    "started_at": "2026-10-07T03:00:00Z",
+    "tokens": {
+      "cache_write_5m": 800,
+      "input": 50,
+      "output": 500
+    },
+    "tool": "claude-code",
+    "tool_version": "2.0.30",
+    "usage_date": "2026-10-07"
+  }
+]

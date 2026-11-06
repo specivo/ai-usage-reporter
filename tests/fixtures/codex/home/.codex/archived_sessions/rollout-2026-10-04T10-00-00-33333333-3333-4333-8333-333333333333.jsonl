@@ -1,0 +1,4 @@
+{"timestamp": "2026-10-04T10:00:00.000Z", "type": "session_meta", "payload": {"id": "33333333-3333-4333-8333-333333333333", "cwd": "/work/CANARY-PATH-7f3a/tools", "cli_version": "0.49.0"}}
+{"timestamp": "2026-10-04T10:00:01.000Z", "type": "turn_context", "payload": {"model": "gpt-5-codex"}}
+{"timestamp": "2026-10-04T10:00:10.000Z", "type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 100, "cached_input_tokens": 0, "output_tokens": 50, "reasoning_output_tokens": 0, "total_tokens": 150}}}}
+{"timestamp": "2026-10-04T10:00:20.000Z", "type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 300, "cached_input_tokens": 50, "output_tokens": 120, "reasoning_output_tokens": 20, "total_tokens": 420}}}}

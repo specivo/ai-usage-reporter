@@ -1,0 +1,64 @@
+[
+  {
+    "ended_at": "2026-10-04T10:00:20Z",
+    "idempotency_key": "127081bf311f5cfcd41ac185f769671b99dc58c6027437dc26d787f5e565de72",
+    "model": "gpt-5-codex",
+    "provider": "openai",
+    "request_count": 2,
+    "session_id": "33333333-3333-4333-8333-333333333333",
+    "started_at": "2026-10-04T10:00:10Z",
+    "tokens": {
+      "cache_read": 50,
+      "input": 250,
+      "output": 100,
+      "reasoning": 20
+    },
+    "tool": "codex",
+    "tool_version": "0.49.0",
+    "usage_date": "2026-10-04"
+  },
+  {
+    "attribution": {
+      "git_branch": "feat/acme-7-search",
+      "repo": "github.com/acme/app"
+    },
+    "ended_at": "2026-10-05T08:03:00Z",
+    "idempotency_key": "d5d2584a01daab30ddf3383a50e302bb2bfa8c31cf08cae93f7e0011d3f10b2c",
+    "model": "gpt-5",
+    "provider": "openai",
+    "request_count": 1,
+    "session_id": "22222222-2222-4222-8222-222222222222",
+    "started_at": "2026-10-05T08:03:00Z",
+    "tokens": {
+      "cache_read": 100,
+      "input": 700,
+      "output": 80,
+      "reasoning": 10
+    },
+    "tool": "codex",
+    "tool_version": "0.50.0",
+    "usage_date": "2026-10-05"
+  },
+  {
+    "attribution": {
+      "git_branch": "feat/acme-7-search",
+      "repo": "github.com/acme/app"
+    },
+    "ended_at": "2026-10-05T08:01:00Z",
+    "idempotency_key": "79091ef1bd740f696f47ac32f51a7b079cef5ce12ed319d297823c8d0e25cc0f",
+    "model": "gpt-5-codex",
+    "provider": "openai",
+    "request_count": 2,
+    "session_id": "22222222-2222-4222-8222-222222222222",
+    "started_at": "2026-10-05T08:00:10Z",
+    "tokens": {
+      "cache_read": 1200,
+      "input": 1300,
+      "output": 350,
+      "reasoning": 150
+    },
+    "tool": "codex",
+    "tool_version": "0.50.0",
+    "usage_date": "2026-10-05"
+  }
+]
