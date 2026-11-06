@@ -1,0 +1,22 @@
+{
+  "schema": "specivo.ai-usage.v1",
+  "client": {"name": "team-usage-collector", "version": "0.4.2"},
+  "records": [
+    {
+      "idempotency_key": "2f393905bbd76facf52450ca2831796659070fd6edd3ac441ab4490fbc9bb3f7",
+      "tool": "codex",
+      "provider": "openai",
+      "model": "gpt-5-codex",
+      "session_id": "5b1d-session",
+      "usage_date": "2026-11-05",
+      "started_at": "2026-11-05T01:00:00Z",
+      "ended_at": "2026-11-05T01:45:00Z",
+      "request_count": 12,
+      "tokens": {"input": 40000, "output": 6000, "cache_read": 120000, "reasoning": 3000},
+      "cost_type": "api",
+      "reported_cost": {"amount": "0.42", "currency": "USD"},
+      "on_behalf_of": "teammate",
+      "attribution": {"project_key": "ACME"}
+    }
+  ]
+}

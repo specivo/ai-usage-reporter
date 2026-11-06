@@ -1,0 +1,55 @@
+{
+  "schema": "specivo.ai-usage.v1",
+  "client": {"name": "ai-usage-reporter", "version": "1.0.0"},
+  "records": [
+    {
+      "idempotency_key": "example-attribution-env",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 100, "output": 50},
+      "attribution": {"issue_ref": "ACME-12", "issue_ref_source": "env"}
+    },
+    {
+      "idempotency_key": "example-attribution-commit",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 100, "output": 50},
+      "attribution": {"commits": ["32fe3796ff2245cb43d05a41280745a53a12bd54"]}
+    },
+    {
+      "idempotency_key": "example-attribution-branch",
+      "tool": "codex",
+      "provider": "openai",
+      "model": "gpt-5-codex",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 100, "output": 50, "reasoning": 20},
+      "attribution": {"git_branch": "feat/acme-7-search"}
+    },
+    {
+      "idempotency_key": "example-attribution-project",
+      "tool": "gemini-cli",
+      "provider": "google",
+      "model": "gemini-2.5-pro",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 100, "output": 50},
+      "attribution": {"project_key": "ACME"}
+    },
+    {
+      "idempotency_key": "example-attribution-repo",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 100, "output": 50},
+      "attribution": {"repo": "git@github.com:acme/app.git", "git_branch": "main"}
+    },
+    {
+      "idempotency_key": "example-attribution-none",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 100, "output": 50}
+    }
+  ]
+}

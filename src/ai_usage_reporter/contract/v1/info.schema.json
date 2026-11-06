@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://specivo.io/schemas/ai-usage/v1/info.schema.json",
+  "title": "AI usage ingest v1: what the server accepts",
+  "description": "The HTTP 200 body of GET /api/v1/ai-usage/ingest. Clients ignore properties they do not know.",
+  "type": "object",
+  "required": [
+    "versions",
+    "max_records",
+    "max_bytes",
+    "server_time",
+    "tools"
+  ],
+  "properties": {
+    "versions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Contract versions the server accepts in the batch's 'schema', newest first."
+    },
+    "max_records": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Most records in one batch."
+    },
+    "max_bytes": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Largest request body, in bytes."
+    },
+    "max_age_days": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Oldest usage_date accepted, in days before today (UTC)."
+    },
+    "rate_limit": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "requests": {
+          "type": "integer"
+        },
+        "window_seconds": {
+          "type": "integer"
+        }
+      },
+      "description": "Batches one account may send per window; null when the server does not limit them."
+    },
+    "server_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "The server's clock, for checking the client's."
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Slugs of the AI tools the server knows and shows. Other valid slugs are accepted too."
+    },
+    "currencies": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Currency codes accepted in reported_cost."
+    }
+  }
+}

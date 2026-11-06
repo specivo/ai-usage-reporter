@@ -1,0 +1,38 @@
+{
+  "schema": "specivo.ai-usage.v1",
+  "client": {"name": "ai-usage-reporter", "version": "1.0.0"},
+  "records": [
+    {
+      "idempotency_key": "752cc282663658a7ec3ea666eb7b7aa62c4aeda5191f2594c426edb9c558bcc4",
+      "tool": "claude-code",
+      "tool_version": "2.1.0",
+      "provider": "anthropic",
+      "model": "claude-opus-4-6",
+      "session_id": "0f6c2a1e-session",
+      "usage_date": "2026-11-05",
+      "timezone": "Asia/Bangkok",
+      "started_at": "2026-11-05T09:10:00+07:00",
+      "ended_at": "2026-11-05T03:40:00Z",
+      "request_count": 42,
+      "tokens": {
+        "input": 1200,
+        "output": 9000,
+        "cache_write_5m": 30000,
+        "cache_write_1h": 0,
+        "cache_read": 900000,
+        "reasoning": 0
+      },
+      "long_context_tokens": null,
+      "reported_cost": {"amount": "1.234500", "currency": "USD"},
+      "cost_type": "subscription",
+      "subscription_hint": "claude-max-20x",
+      "attribution": {
+        "issue_ref": "ACME-12",
+        "project_key": "ACME",
+        "git_branch": "feat/acme-12-login",
+        "repo": "github.com/acme/app",
+        "commits": ["32fe3796ff2245cb43d05a41280745a53a12bd54"]
+      }
+    }
+  ]
+}

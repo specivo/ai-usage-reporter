@@ -1,0 +1,13 @@
+{
+  "schema": "specivo.ai-usage.v1",
+  "client": {"name": "ai-usage-reporter"},
+  "records": [
+    {
+      "idempotency_key": "cd754fb623c03b79435eb36f0673e4b1a0c30539a5fbaa259e32814d7745453b",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 5200, "output": 1800}
+    }
+  ]
+}

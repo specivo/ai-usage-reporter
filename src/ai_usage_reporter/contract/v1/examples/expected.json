@@ -1,0 +1,43 @@
+{
+  "$comment": "What a Specivo server answers to each example, sent on 2026-11-06 by the account 'reporter-bot' in the world described in the README (section Examples).",
+  "valid": {
+    "minimal.json": [
+      {"status": "created", "method": "none", "issue_ref": null, "project_key": null}
+    ],
+    "full-record.json": [
+      {"status": "created", "method": "explicit", "issue_ref": "ACME-12", "project_key": "ACME"}
+    ],
+    "attribution-steps.json": [
+      {"status": "created", "method": "env", "issue_ref": "ACME-12", "project_key": "ACME"},
+      {"status": "created", "method": "commit", "issue_ref": "ACME-3", "project_key": "ACME"},
+      {"status": "created", "method": "branch", "issue_ref": "ACME-7", "project_key": "ACME"},
+      {"status": "created", "method": "explicit", "issue_ref": null, "project_key": "ACME"},
+      {"status": "created", "method": "repo", "issue_ref": null, "project_key": "ACME"},
+      {"status": "created", "method": "none", "issue_ref": null, "project_key": null}
+    ],
+    "on-behalf.json": [
+      {"status": "created", "method": "explicit", "issue_ref": null, "project_key": "ACME"}
+    ]
+  },
+  "invalid": {
+    "unsupported-schema.json": {"http_status": 400, "code": "unsupported_schema", "schema_valid": false},
+    "missing-client.json": {"http_status": 400, "code": "invalid_batch", "schema_valid": false},
+    "empty-records.json": {"http_status": 400, "code": "invalid_batch", "schema_valid": false},
+    "record-errors.json": {
+      "http_status": 200,
+      "schema_valid": false,
+      "records": [
+        {"code": "invalid_record", "field": "tokens.input", "schema_valid": false},
+        {"code": "invalid_record", "field": "started_at", "schema_valid": false},
+        {"code": "invalid_record", "field": "idempotency_key", "schema_valid": false},
+        {"code": "invalid_record", "field": "started_at", "schema_valid": true},
+        {"code": "invalid_record", "field": "ended_at", "schema_valid": true},
+        {"code": "invalid_record", "field": "usage_date", "schema_valid": true},
+        {"code": "invalid_record", "field": "usage_date", "schema_valid": true},
+        {"code": "currency_unknown", "field": "reported_cost.currency", "schema_valid": true},
+        {"code": "not_found", "field": "attribution.issue_ref", "schema_valid": true},
+        {"code": "target_unknown", "field": "on_behalf_of", "schema_valid": true}
+      ]
+    }
+  }
+}

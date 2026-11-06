@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://specivo.io/schemas/ai-usage/v1/batch.schema.json",
+  "title": "AI usage ingest v1: request body",
+  "description": "The body of POST /api/v1/ai-usage/ingest: the contract version, the client that sends it and up to 500 usage records. The whole body is at most 1 MiB.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "client",
+    "records"
+  ],
+  "properties": {
+    "schema": {
+      "const": "specivo.ai-usage.v1",
+      "description": "The contract version of this body."
+    },
+    "client": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Name of the program that sends the batch, e.g. ai-usage-reporter."
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 50,
+          "description": "Its version."
+        }
+      }
+    },
+    "records": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 500,
+      "items": {
+        "$ref": "record.schema.json"
+      }
+    }
+  }
+}

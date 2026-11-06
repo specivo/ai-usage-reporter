@@ -1,0 +1,85 @@
+{
+  "schema": "specivo.ai-usage.v1",
+  "client": {"name": "ai-usage-reporter"},
+  "records": [
+    {
+      "idempotency_key": "example-negative-tokens",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": -5}
+    },
+    {
+      "idempotency_key": "example-no-offset",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "started_at": "2026-11-05T09:10:00",
+      "tokens": {"input": 1}
+    },
+    {
+      "idempotency_key": "example key with spaces",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 1}
+    },
+    {
+      "idempotency_key": "example-started-on-another-day",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "started_at": "2026-11-05T02:00:00+07:00",
+      "tokens": {"input": 1}
+    },
+    {
+      "idempotency_key": "example-ended-before-started",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "started_at": "2026-11-05T10:00:00Z",
+      "ended_at": "2026-11-05T09:00:00Z",
+      "tokens": {"input": 1}
+    },
+    {
+      "idempotency_key": "example-future-day",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2099-01-01",
+      "tokens": {"input": 1}
+    },
+    {
+      "idempotency_key": "example-too-old",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2024-01-01",
+      "tokens": {"input": 1}
+    },
+    {
+      "idempotency_key": "example-unknown-currency",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 1},
+      "cost_type": "api",
+      "reported_cost": {"amount": "1.00", "currency": "ZZZ"}
+    },
+    {
+      "idempotency_key": "example-unknown-issue",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 1},
+      "attribution": {"issue_ref": "ACME-999"}
+    },
+    {
+      "idempotency_key": "example-unknown-user",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 1},
+      "attribution": {"project_key": "ACME"},
+      "on_behalf_of": "nobody-by-this-login"
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+[project]
+name = "specivo-ai-usage-reporter"
+version = "0.1.0"
+description = "Read the local logs of AI coding tools and report their token usage to Specivo, privately"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.11"
+authors = [{ name = "Specivo" }]
+keywords = ["specivo", "ai-usage", "claude-code", "codex", "tokens", "cost-tracking"]
+# Standard library only at runtime. The extras are optional.
+dependencies = []
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+    "Topic :: Utilities",
+    "Typing :: Typed",
+]
+
+[project.optional-dependencies]
+# Store the API key in the OS keychain (macOS Keychain, Windows Credential Locker, Secret Service).
+keyring = ["keyring>=24"]
+# Read zstd-compressed Codex rollouts (*.jsonl.zst) on Python versions without compression.zstd.
+zstd = ["zstandard>=0.22"]
+
+[project.urls]
+Homepage = "https://specivo.io"
+Documentation = "https://specivo.io/docs/ai-usage-reporter/"
+Repository = "https://github.com/specivo/ai-usage-reporter"
+Issues = "https://github.com/specivo/ai-usage-reporter/issues"
+
+[project.scripts]
+ai-usage = "ai_usage_reporter.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ai_usage_reporter"]
+
+[dependency-groups]
+dev = [
+    "jsonschema>=4.23",
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "ruff>=0.8",
+    "types-jsonschema>=4.23",
+    "zstandard>=0.22",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short --strict-markers"
+markers = [
+    "e2e: talks to a real Specivo server; skipped unless SPECIVO_E2E_URL and SPECIVO_E2E_API_KEY are set",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+# The README's examples are laid out for reading, not by the formatter.
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["keyring", "keyring.*", "zstandard", "compression", "compression.*"]
+ignore_missing_imports = true

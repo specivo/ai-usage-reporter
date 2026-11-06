@@ -1,0 +1,12 @@
+{
+  "schema": "specivo.ai-usage.v1",
+  "records": [
+    {
+      "idempotency_key": "example-missing-client",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 1}
+    }
+  ]
+}

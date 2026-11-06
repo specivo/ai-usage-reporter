@@ -1,0 +1,198 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://specivo.io/schemas/ai-usage/v1/result.schema.json",
+  "title": "AI usage ingest v1: response to a batch",
+  "description": "The HTTP 200 body of POST /api/v1/ai-usage/ingest: one result per record, in the order sent. Clients ignore properties they do not know, so objects here are open.",
+  "type": "object",
+  "required": [
+    "schema",
+    "server_time",
+    "summary",
+    "results",
+    "warnings"
+  ],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "description": "The contract version the server read the batch as."
+    },
+    "server_time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "received",
+        "created",
+        "updated",
+        "unchanged",
+        "rejected"
+      ],
+      "properties": {
+        "received": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "created": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "updated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unchanged": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rejected": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/recordResult"
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "description": "Warnings about the batch as a whole, e.g. unknown top-level properties.",
+      "items": {
+        "$ref": "#/$defs/problem"
+      }
+    }
+  },
+  "$defs": {
+    "problem": {
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "Machine-readable, snake_case. Treat codes you do not know like the closest generic one (a warning stays a warning, an error stays an error)."
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable, English. Never parse it."
+        },
+        "field": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Dotted path inside the record, e.g. attribution.issue_ref."
+        }
+      }
+    },
+    "recordResult": {
+      "type": "object",
+      "required": [
+        "index",
+        "idempotency_key",
+        "status",
+        "entry_id",
+        "warnings",
+        "error"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Position of the record in the batch, from 0."
+        },
+        "idempotency_key": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The record's key as sent; null when the record had none that could be read."
+        },
+        "status": {
+          "enum": [
+            "created",
+            "updated",
+            "unchanged",
+            "rejected"
+          ]
+        },
+        "entry_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Id of the stored entry; null when rejected."
+        },
+        "revision": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Revision of the stored entry; it grows on every change."
+        },
+        "attribution": {
+          "anyOf": [
+            {
+              "type": "object",
+              "required": [
+                "method"
+              ],
+              "properties": {
+                "method": {
+                  "enum": [
+                    "explicit",
+                    "env",
+                    "mcp_session",
+                    "commit",
+                    "branch",
+                    "repo",
+                    "none"
+                  ]
+                },
+                "project_key": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "issue_ref": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the stored entry is attributed now; null when rejected."
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/problem"
+          }
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/problem"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why the record was rejected; null otherwise."
+        }
+      }
+    }
+  }
+}

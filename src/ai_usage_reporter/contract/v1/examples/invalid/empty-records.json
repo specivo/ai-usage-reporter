@@ -1,0 +1,5 @@
+{
+  "schema": "specivo.ai-usage.v1",
+  "client": {"name": "ai-usage-reporter"},
+  "records": []
+}
