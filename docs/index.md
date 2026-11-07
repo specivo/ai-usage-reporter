@@ -328,7 +328,7 @@ your repositories in `[projects]` to get the precise reasons.
 | `on_behalf_of` | The login usage is reported for (service accounts) |
 | `git_commits` | Add SHAs of your commits made during the session (default `true`; needs `git_enrichment`) |
 | `exclude_paths` | Sessions that ran in these directories are never reported |
-| `[sources.<name>]` | `enabled = false` turns a source off; `roots = [...]` reads other directories; `via = "ccusage"` counts the tool through `import ccusage` instead of its logs |
+| `[sources.<name>]` | `enabled = false` turns a source off; `roots = [...]` reads other directories; `via = "ccusage"` counts the tool through `import ccusage` instead of its logs; `project = "KEY"` is the tool's project when no `[projects]` repository pattern matches (for example sessions outside any git repository) |
 | `[[cost_rules]]` | `tool`, `model`, `repo` (patterns) → `cost_type`, `subscription_hint`; the first match wins |
 | `[projects]` | Repository pattern (`host/owner/repo`) → Specivo project key |
 | `[long_context]` | Model pattern → long-context threshold in tokens |

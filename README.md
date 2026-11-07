@@ -174,6 +174,7 @@ subscription_hint = "claude-max-20x"
 
 [sources.opencode]
 roots = ["~/.local/share/opencode"]  # the default; XDG_DATA_HOME moves it
+project = "ACME"                     # its project when no [projects] repository pattern matches
 
 [sources.gemini-cli]
 via = "ccusage"                      # count Gemini CLI through "ai-usage import ccusage" instead

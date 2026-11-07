@@ -184,7 +184,7 @@ class Enricher:
         attribution = Attribution(
             issue_ref=issue,
             issue_ref_source="env" if issue else None,
-            project_key=self.config.project_for(repo),
+            project_key=self.config.project_for(repo, bucket.tool),
             git_branch=bucket.git_branch,
             repo=repo,
             commits=commits,

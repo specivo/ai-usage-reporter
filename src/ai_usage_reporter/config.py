@@ -128,12 +128,15 @@ class SourceSettings:
     ``via`` makes the two ways of reading a tool exclusive: with ``native`` (the
     default) ``push`` reads the tool's logs and ``import ccusage`` skips its
     rows; with ``ccusage`` it is the other way round. A tool is never counted
-    twice.
+    twice. ``project`` is the Specivo project key for this tool's usage when no
+    ``[projects]`` repository pattern matches (for example a tool used outside
+    any git repository).
     """
 
     enabled: bool = True
     roots: tuple[str, ...] = ()
     via: str = "native"
+    project: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,12 +163,14 @@ class Config:
                 return rule
         return None
 
-    def project_for(self, repo: str | None) -> str | None:
-        if repo is None:
-            return None
-        for pattern, project in self.projects.items():
-            if fnmatchcase(repo.lower(), pattern.lower()):
-                return project
+    def project_for(self, repo: str | None, tool: str | None = None) -> str | None:
+        """The project of a repository by ``[projects]``; otherwise the tool's ``[sources.<tool>] project``."""
+        if repo is not None:
+            for pattern, project in self.projects.items():
+                if fnmatchcase(repo.lower(), pattern.lower()):
+                    return project
+        if tool is not None:
+            return self.source(tool).project
         return None
 
 
@@ -209,13 +214,18 @@ def parse_config(data: Mapping[str, Any], path: Path | None = None) -> Config:
         enabled = table.get("enabled", True)
         if not isinstance(enabled, bool):
             raise ConfigError(f"sources.{name}.enabled must be true or false")
-        extra = set(table) - {"enabled", "roots", "via"}
+        extra = set(table) - {"enabled", "roots", "via", "project"}
         if extra:
             raise ConfigError(f"[sources.{name}]: unknown key(s) {', '.join(sorted(extra))}")
         via = table.get("via", "native")
         if via not in SOURCE_VIAS:
             raise ConfigError(f"sources.{name}.via must be one of {', '.join(SOURCE_VIAS)}")
-        sources[name] = SourceSettings(enabled=enabled, roots=_str_list(table, "roots", f"sources.{name}."), via=via)
+        sources[name] = SourceSettings(
+            enabled=enabled,
+            roots=_str_list(table, "roots", f"sources.{name}."),
+            via=via,
+            project=_opt_str(table, "project", f"sources.{name}."),
+        )
     rules: list[CostRule] = []
     raw_rules = data.get("cost_rules", [])
     if not isinstance(raw_rules, list):
@@ -311,6 +321,7 @@ exclude_paths = []
 
 # [sources.opencode]
 # roots = ["~/.local/share/opencode"]
+# project = "ACME"   # its project when no [projects] repository pattern matches
 
 # A tool read through "ai-usage import ccusage" instead of its own logs.
 # The two are exclusive, so the tool is never counted twice.

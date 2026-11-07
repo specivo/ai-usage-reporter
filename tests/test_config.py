@@ -107,3 +107,22 @@ def test_keychain_comes_first(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     monkeypatch.setattr(apikey, "_keyring_get", lambda url: "spv_keychain")
     key = resolve_api_key("https://h.example", tmp_path, {"SPECIVO_API_KEY": "spv_env"})
     assert key == ApiKey("spv_keychain", "keychain")
+
+
+def test_a_source_project_applies_when_no_repository_pattern_matches(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        """
+[projects]
+"github.com/acme/*" = "ACME"
+
+[sources.opencode]
+project = "WORK"
+""",
+        encoding="utf-8",
+    )
+    config = load_config(path)
+    assert config.project_for(None, "opencode") == "WORK"
+    assert config.project_for("github.com/other/app", "opencode") == "WORK"
+    assert config.project_for("github.com/acme/app", "opencode") == "ACME"
+    assert config.project_for(None, "codex") is None
