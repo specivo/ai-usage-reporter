@@ -142,6 +142,24 @@ class UsageEvent:
     #: has one.
     cost: str | None = None
     cost_currency: str | None = None
+    #: The thread of the session the request ran in when it is not the main
+    #: thread: a Claude Code subagent's transcript. ``None`` is the main thread
+    #: (or a child session already named in ``sub_session_id``).
+    thread: str | None = None
+    #: Set on a **marker**, not on usage: the agent marked this issue (upper
+    #: case, e.g. ``ACME-12``) at ``timestamp`` with one of its Specivo tool
+    #: calls. A marker carries no tokens and no requests; see
+    #: :mod:`ai_usage_reporter.segments`.
+    issue_mark: str | None = None
+
+    @property
+    def is_marker(self) -> bool:
+        return self.issue_mark is not None
+
+    @property
+    def thread_id(self) -> str | None:
+        """The thread within the session: a subagent transcript or a child session."""
+        return self.thread or self.sub_session_id
 
     def to_cache(self) -> dict[str, Any]:
         """A JSON-able form for the local state cache (never sent anywhere)."""

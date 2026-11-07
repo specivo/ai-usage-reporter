@@ -266,6 +266,12 @@ def cmd_push(args: argparse.Namespace) -> int:
         print("errors: " + ", ".join(f"{k} {v}" for k, v in sorted(summary.errors.items())), file=sys.stderr)
     if summary.warnings:
         print("warnings: " + ", ".join(f"{k} {v}" for k, v in sorted(summary.warnings.items())), file=sys.stderr)
+    if summary.agent_log_resent or summary.agent_log_left_out:
+        print(
+            f"{summary.agent_log_resent + summary.agent_log_left_out} records went without the issue read from the"
+            " agent's log (the server does not take it, or could not use it)",
+            file=sys.stderr,
+        )
     return 1 if summary.statuses.get("pending") else 0
 
 

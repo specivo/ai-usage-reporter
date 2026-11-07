@@ -67,6 +67,13 @@
         "type": "string"
       },
       "description": "Currency codes accepted in reported_cost."
+    },
+    "issue_ref_sources": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "The values of attribution.issue_ref_source the server knows. Servers that leave it out know 'explicit' and 'env' only."
     }
   }
 }

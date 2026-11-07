@@ -142,6 +142,8 @@ class ServerInfo:
     rate_limit: dict[str, Any] | None
     currencies: list[str]
     tools: list[str]
+    #: The issue_ref_source values the server knows, when it says (newer servers do); else ``None``.
+    issue_ref_sources: list[str] | None = None
 
 
 class SpecivoSink:
@@ -209,10 +211,18 @@ class SpecivoSink:
             rate_limit=data.get("rate_limit"),
             currencies=[str(c) for c in data.get("currencies", [])],
             tools=[str(t) for t in data.get("tools", [])],
+            issue_ref_sources=[str(v) for v in data["issue_ref_sources"]]
+            if isinstance(data.get("issue_ref_sources"), list)
+            else None,
         )
         if CONTRACT_VERSION not in self._info.versions:
             raise SinkError(f"the server does not accept {CONTRACT_VERSION} (it accepts {self._info.versions})")
         return self._info
+
+    def supports_issue_ref_source(self, source: str) -> bool | None:
+        """Whether the server knows this ``issue_ref_source``; ``None`` when it does not say."""
+        known = self.info().issue_ref_sources
+        return None if known is None else source in known
 
     def _batches(self, records: Sequence[dict[str, Any]]) -> list[list[dict[str, Any]]]:
         info = self.info()

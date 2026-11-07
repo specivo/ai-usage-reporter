@@ -22,16 +22,26 @@ What the rollout format looks like, and what this adapter does with it:
 - OpenAI counts cached input inside ``input_tokens`` and reasoning inside
   ``output_tokens``. Both are moved to their own classes so each token is
   counted once (``cache_read`` and ``reasoning``).
+- **Issue marks.** A ``response_item`` of type ``function_call`` names the
+  tool (``name``, with the MCP server in ``namespace``) and its ``arguments``
+  as JSON text; an ``event_msg`` of type ``mcp_tool_call_end`` repeats the
+  call (``invocation.tool`` and ``invocation.arguments``) with its
+  ``result``. Marking Specivo calls (see :mod:`ai_usage_reporter.issue_marks`)
+  become markers at the call's time; ``specivo_create_issue`` takes the
+  created key from the ``mcp_tool_call_end`` result. Only the tool name, the
+  arguments that decide the mark and the issue key are read.
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Iterator
+from datetime import datetime
 from pathlib import Path
 
 from ai_usage_reporter.adapters import DiscoveryContext, HookSpec
 from ai_usage_reporter.adapters._jsonl import get_dict, get_str, iter_json_lines, zstd_available
+from ai_usage_reporter.issue_marks import CREATE, created_issue, marking_call
 from ai_usage_reporter.model import SourceFile, TokenCounts, UsageEvent, count, parse_timestamp
 
 _UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
@@ -76,7 +86,7 @@ def codex_homes(ctx: DiscoveryContext) -> list[Path]:
 class CodexAdapter:
     name = "codex"
     provider = "openai"
-    parser_version = "codex/1"
+    parser_version = "codex/2"
 
     def discover(self, ctx: DiscoveryContext) -> Iterable[SourceFile]:
         can_decompress = zstd_available()
@@ -112,10 +122,26 @@ class CodexAdapter:
         branch: str | None = None
         repo_url: str | None = None
         running: Raw | None = None
+        #: Calls already marked, and specivo_create_issue calls waiting for their result.
+        marked: set[str] = set()
+        creating: dict[str, datetime] = {}
         for line in iter_json_lines(src.path, src.stats):
             kind = line.get("type")
             payload = line.get("payload")
             if not isinstance(payload, dict):
+                continue
+            if payload.get("type") in ("function_call", "mcp_tool_call_end"):
+                for issue, marked_at in self._marks(line, payload, marked, creating):
+                    yield UsageEvent(
+                        tool=self.name,
+                        session_id=session,
+                        model="",
+                        timestamp=marked_at,
+                        tokens=TokenCounts(),
+                        requests=0,
+                        cwd=cwd,
+                        issue_mark=issue,
+                    )
                 continue
             if kind == "session_meta":
                 session = (get_str(payload, "id") or session).lower()
@@ -173,6 +199,39 @@ class CodexAdapter:
                 cwd=cwd,
                 source_path=str(src.path),
             )
+
+    @staticmethod
+    def _marks(
+        line: dict[str, object], payload: dict[str, object], marked: set[str], creating: dict[str, datetime]
+    ) -> Iterator[tuple[str, datetime]]:
+        """The issues one line marks, with the time of the call (see :mod:`ai_usage_reporter.issue_marks`)."""
+        when = parse_timestamp(line.get("timestamp"))
+        call_id = get_str(payload, "call_id")
+        if when is None or call_id is None or call_id in marked:
+            return
+        if payload.get("type") == "function_call":
+            mark = marking_call(payload.get("name"), payload.get("arguments"))
+            if mark == CREATE:
+                creating.setdefault(call_id, when)
+            elif mark is not None:
+                marked.add(call_id)
+                yield mark, when
+            return
+        invocation = get_dict(payload, "invocation")
+        mark = marking_call(get_str(invocation, "tool"), (invocation or {}).get("arguments"))
+        if mark is None:
+            return
+        marked.add(call_id)
+        started = creating.pop(call_id, when)
+        if mark != CREATE:
+            yield mark, started
+            return
+        result = get_dict(payload, "result", "Ok")
+        if result is None or result.get("isError") is True:
+            return
+        created = created_issue(result.get("content"))
+        if created is not None:
+            yield created, started
 
     def dedup_key(self, event: UsageEvent) -> str | None:
         # The same point of the same session's running total, in a copied rollout.

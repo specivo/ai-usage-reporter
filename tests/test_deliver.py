@@ -150,3 +150,84 @@ def test_strip_explicit_keeps_inferred_hints() -> None:
     wire = {"attribution": {"issue_ref": "A-1", "issue_ref_source": "env", "project_key": "A", "repo": "h/o/r"}}
     assert strip_explicit(wire) == {"attribution": {"repo": "h/o/r"}}
     assert strip_explicit({"attribution": {"project_key": "A"}}) == {}
+
+
+AGENT_LOG = Attribution(issue_ref="ACME-12", issue_ref_source="agent_log", project_key="ACME", git_branch="main")
+
+
+def _refuse_agent_log(records: list[dict[str, Any]]) -> HttpResponse:
+    """An older server: issue_ref_source "agent_log" breaks its schema."""
+
+    def decide(i: int, r: dict[str, Any]) -> dict[str, Any]:
+        if (r.get("attribution") or {}).get("issue_ref_source") == "agent_log":
+            error = {"code": "invalid_record", "message": "not a valid value", "field": "attribution.issue_ref_source"}
+            return result_item(i, r["idempotency_key"], "rejected", error=error)
+        return result_item(i, r["idempotency_key"])
+
+    return ok(records, decide)
+
+
+def test_an_older_server_gets_the_record_again_without_the_agent_log_issue(server: FakeServer) -> None:
+    server.default = _refuse_agent_log
+    records = [make_record(0, attribution=AGENT_LOG), make_record(1, attribution=AGENT_LOG.without_explicit())]
+    with State.in_memory() as state:
+        summary = deliver(records, _sink(server), state)
+        assert summary.agent_log_resent == 1 and summary.warnings["agent_log_dropped"] == 1
+        assert not summary.errors
+        assert len(server.posts) == 2
+        stripped = {**records[0].to_wire(), "attribution": {"project_key": "ACME", "git_branch": "main"}}
+        assert server.posts[1] == [stripped]
+        assert all((row := state.bucket(r.idempotency_key)) and row.status == SENT for r in records)
+        # Unchanged buckets are not sent again, and while the refusal is remembered, a changed one
+        # goes without the issue at once: one request, no rejection.
+        assert deliver(records, _sink(server), state).sent == 0
+        changed = make_record(0, attribution=AGENT_LOG, tokens=TokenCounts(input=5000))
+        summary = deliver([changed], _sink(server), state)
+        assert summary.sent == 1 and summary.agent_log_left_out == 1 and summary.agent_log_resent == 0
+        assert "issue_ref" not in server.posts[-1][0]["attribution"]
+        assert len(server.posts) == 3
+
+
+def test_an_unusable_agent_log_issue_rejected_by_an_older_server_is_dropped(server: FakeServer) -> None:
+    def not_found(records: list[dict[str, Any]]) -> HttpResponse:
+        error = {"code": "not_found", "message": "no such issue", "field": "attribution.issue_ref"}
+        return ok(records, lambda i, r: result_item(i, r["idempotency_key"], "rejected", error=error))
+
+    server.responders = [not_found]
+    record = make_record(attribution=AGENT_LOG)
+    with State.in_memory() as state:
+        summary = deliver([record], _sink(server), state)
+        assert summary.agent_log_resent == 1 and summary.statuses["created"] == 1
+        row = state.bucket(record.idempotency_key)
+        assert row is not None and row.status == SENT and "issue_ref" not in row.payload["attribution"]
+        # Not a refusal of the value itself: the next changed bucket still tries its issue.
+        changed = make_record(attribution=AGENT_LOG, tokens=TokenCounts(input=5000))
+        deliver([changed], _sink(server), state)
+        assert server.posts[-1][0]["attribution"]["issue_ref_source"] == "agent_log"
+
+
+def test_a_server_that_lists_its_issue_ref_sources_decides_up_front(server: FakeServer) -> None:
+    record = make_record(attribution=AGENT_LOG)
+    server.info["issue_ref_sources"] = ["explicit", "env"]
+    with State.in_memory() as state:
+        summary = deliver([record], _sink(server), state)
+        assert summary.agent_log_left_out == 1 and len(server.posts) == 1
+        assert "issue_ref" not in server.posts[0][0]["attribution"]
+    server.info["issue_ref_sources"] = ["explicit", "env", "agent_log"]
+    with State.in_memory() as state:
+        deliver([record], _sink(server), state)
+        assert server.posts[-1][0]["attribution"]["issue_ref_source"] == "agent_log"
+
+
+def test_a_refusal_is_forgotten_after_a_while(server: FakeServer) -> None:
+    import json
+    from datetime import UTC, datetime, timedelta
+
+    from ai_usage_reporter.pipeline import AGENT_LOG_META
+
+    record = make_record(attribution=AGENT_LOG)
+    with State.in_memory() as state:
+        past = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+        state.set_meta(AGENT_LOG_META, json.dumps({"url": _sink(server).url, "until": past}))
+        deliver([record], _sink(server), state)
+        assert server.posts[-1][0]["attribution"]["issue_ref_source"] == "agent_log"

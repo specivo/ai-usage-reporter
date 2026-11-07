@@ -235,9 +235,10 @@
           "enum": [
             "explicit",
             "env",
+            "agent_log",
             null
           ],
-          "description": "Where issue_ref came from: 'env' for the SPECIVO_ISSUE environment variable, 'explicit' (the default) otherwise."
+          "description": "Where issue_ref came from: 'env' for the SPECIVO_ISSUE environment variable, 'agent_log' for the issue the agent marked with its own Specivo tool calls (inferred: dropped, not refused, when unusable), 'explicit' (the default) otherwise."
         },
         "project_key": {
           "type": [

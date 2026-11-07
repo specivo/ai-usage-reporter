@@ -6,6 +6,7 @@ through a sink and keeps the ledger in the state database.
 
 from __future__ import annotations
 
+import json
 import os
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
@@ -20,8 +21,9 @@ from ai_usage_reporter.config import Config
 from ai_usage_reporter.dedup import deduplicate
 from ai_usage_reporter.enrich import Enricher, GitInfo
 from ai_usage_reporter.longcontext import Thresholds
-from ai_usage_reporter.model import SourceBusyError, UsageEvent
-from ai_usage_reporter.record import ContractRecord, RecordError, canonical_json, opaque_session_id
+from ai_usage_reporter.model import SourceBusyError, TokenCounts, UsageEvent
+from ai_usage_reporter.record import AGENT_LOG, ContractRecord, RecordError, canonical_json, opaque_session_id
+from ai_usage_reporter.segments import segment_issues, split_markers
 from ai_usage_reporter.sinks import PENDING, Outcome, Sink
 from ai_usage_reporter.state import CONFLICT, REJECTED, SENT, FileIdentity, State
 from ai_usage_reporter.state import PENDING as STATE_PENDING
@@ -31,6 +33,12 @@ DEFAULT_MAX_AGE_DAYS = 400
 #: Error codes that mean "try again later" rather than "this record is wrong".
 RETRYABLE_ERRORS = frozenset({"internal_error"})
 EXPLICIT_HINTS = ("issue_ref", "issue_ref_source", "project_key")
+#: Rejections of a record carrying an agent_log issue after which it is sent again without that issue.
+#: A server that knows agent_log drops an unusable one with a warning instead; these come from older ones.
+AGENT_LOG_FALLBACK_ERRORS = frozenset({"not_found", "forbidden", "attribution_invalid", "target_not_member"})
+#: After a server refused issue_ref_source "agent_log", it is left out for this long, then tried again.
+AGENT_LOG_RETRY_AFTER = timedelta(days=7)
+AGENT_LOG_META = "agent_log_unsupported"
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +131,7 @@ def collect(
     excluded = [_norm(str(Path(p).expanduser())) for p in config.exclude_paths]
     reports: dict[str, SourceReport] = {}
     events: list[UsageEvent] = []
+    markers: list[UsageEvent] = []
     for name in names:
         adapter = registry.get(name)
         if adapter is None:
@@ -168,12 +177,14 @@ def collect(
             adapter_events.extend(file_events)
         if state is not None:
             state.forget_missing_files(name, {str(s.path) for s in sources})
-        report.events = len(adapter_events)
-        unique = deduplicate(adapter, adapter_events)
+        adapter_usage, adapter_markers = split_markers(adapter_events)
+        report.events = len(adapter_usage)
+        unique = deduplicate(adapter, adapter_usage)
         report.after_dedup = len(unique)
         kept = [e for e in unique if not _excluded(e.cwd, excluded)]
         report.excluded = len(unique) - len(kept)
         events.extend(kept)
+        markers.extend(m for m in adapter_markers if not _excluded(m.cwd, excluded))
     if selection.session is not None:
         wanted = selection.session
         # A record holds a session's full totals, so naming a child session (a
@@ -185,7 +196,8 @@ def collect(
         }
         events = [e for e in events if (e.tool, e.session_id) in chosen]
     oldest = (now - timedelta(days=max_age_days - 1)).date()
-    buckets = aggregate(events, thresholds)
+    issues = segment_issues(events, markers) if config.agent_log_issues else None
+    buckets = aggregate(events, thresholds, issues)
     too_old = sum(1 for b in buckets if b.usage_date < oldest)
     buckets = [b for b in buckets if b.usage_date >= oldest]
     if selection.since is not None:
@@ -209,8 +221,50 @@ def collect(
             continue
         records.append(record)
     if state is not None:
+        records.extend(superseded_records(records, state))
         state.commit()
     return Collected(records=records, reports=reports, too_old=too_old, invalid=invalid)
+
+
+def superseded_records(records: Sequence[ContractRecord], state: State) -> list[ContractRecord]:
+    """Zero totals for buckets sent earlier that today's segments no longer have.
+
+    A session/model/day's usage is split among its segment buckets. When the
+    split changes (the agent's first mark moved earlier usage to its issue, or
+    ``agent_log_issues`` was switched off), a key sent before can be left
+    without usage. Its entry in Specivo would still hold the old totals and be
+    counted twice, so it is sent again with no tokens. Only buckets of a
+    session/model/day present in *records* are looked at.
+    """
+    current = {r.idempotency_key for r in records}
+    groups = {
+        (r.tool, opaque_session_id(r.session_id), r.model, r.usage_date.isoformat()) for r in records if r.session_id
+    }
+    out: list[ContractRecord] = []
+    for row in state.buckets():
+        if row.idempotency_key in current or row.status not in (SENT, CONFLICT, STATE_PENDING):
+            continue
+        if (row.tool, row.session_id, row.model, row.usage_date) not in groups:
+            continue
+        payload = row.payload
+        try:
+            day = date.fromisoformat(row.usage_date)
+        except ValueError:
+            continue
+        out.append(
+            ContractRecord(
+                idempotency_key=row.idempotency_key,
+                tool=row.tool,
+                model=row.model,
+                usage_date=day,
+                tokens=TokenCounts(),
+                tool_version=payload.get("tool_version"),
+                provider=payload.get("provider"),
+                session_id=row.session_id,
+                on_behalf_of=payload.get("on_behalf_of"),
+            )
+        )
+    return out
 
 
 @dataclass(slots=True)
@@ -224,6 +278,10 @@ class DeliverySummary:
     errors: Counter[str] = field(default_factory=Counter)
     warnings: Counter[str] = field(default_factory=Counter)
     conflicts_resent: int = 0
+    #: Records sent again without their agent_log issue after a rejection.
+    agent_log_resent: int = 0
+    #: Records sent without their agent_log issue because the server does not take it.
+    agent_log_left_out: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -236,6 +294,8 @@ class DeliverySummary:
             "errors": dict(self.errors),
             "warnings": dict(self.warnings),
             "conflicts_resent": self.conflicts_resent,
+            "agent_log_resent": self.agent_log_resent,
+            "agent_log_left_out": self.agent_log_left_out,
         }
 
 
@@ -258,6 +318,62 @@ def strip_explicit(wire: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
+def has_agent_log_issue(wire: Mapping[str, Any]) -> bool:
+    attribution = wire.get("attribution")
+    return isinstance(attribution, Mapping) and attribution.get("issue_ref_source") == AGENT_LOG
+
+
+def strip_agent_log(wire: Mapping[str, Any]) -> dict[str, Any]:
+    """The record without an issue read from the agent's log; every other hint stays."""
+    out = dict(wire)
+    if not has_agent_log_issue(out):
+        return out
+    attribution = {k: v for k, v in out["attribution"].items() if k not in ("issue_ref", "issue_ref_source")}
+    if attribution:
+        out["attribution"] = attribution
+    else:
+        out.pop("attribution", None)
+    return out
+
+
+def refuses_agent_log_source(outcome: Outcome) -> bool:
+    """The server does not know issue_ref_source "agent_log" (a server older than the value)."""
+    if outcome.status != "rejected" or outcome.error_code != "invalid_record":
+        return False
+    return "issue_ref_source" in f"{outcome.error_field or ''} {outcome.error_message or ''}"
+
+
+def _agent_log_fallback(outcome: Outcome) -> bool:
+    return refuses_agent_log_source(outcome) or (
+        outcome.status == "rejected" and outcome.error_code in AGENT_LOG_FALLBACK_ERRORS
+    )
+
+
+def _agent_log_unsupported(sink: Sink, state: State | None, now: datetime) -> bool:
+    """Whether to leave agent_log issues out: the server says it does not take them, or refused them lately."""
+    check = getattr(sink, "supports_issue_ref_source", None)
+    if callable(check):
+        answer = check(AGENT_LOG)
+        if answer is not None:
+            return not answer
+    if state is None:
+        return False
+    raw = state.meta(AGENT_LOG_META)
+    if not raw:
+        return False
+    try:
+        memo = json.loads(raw)
+        until = datetime.fromisoformat(memo["until"])
+    except (ValueError, KeyError, TypeError):
+        return False
+    return memo.get("url") == getattr(sink, "url", None) and now < until
+
+
+def _remember_agent_log_refused(sink: Sink, state: State, now: datetime) -> None:
+    memo = {"url": getattr(sink, "url", None), "until": (now + AGENT_LOG_RETRY_AFTER).isoformat()}
+    state.set_meta(AGENT_LOG_META, json.dumps(memo))
+
+
 def deliver(
     records: Sequence[ContractRecord],
     sink: Sink,
@@ -270,6 +386,14 @@ def deliver(
     summary = DeliverySummary(records=len(records))
     wires = [r.to_wire() for r in records]
     ledger = state if (state is not None and sink.records_state) else None
+    now = datetime.now(UTC)
+    #: The hash of each record as built, when what is sent differs from it.
+    built: dict[str, str] = {}
+    if ledger is not None and any(has_agent_log_issue(w) for w in wires) and _agent_log_unsupported(sink, ledger, now):
+        # The server does not take agent_log issues: the records go without them.
+        summary.agent_log_left_out = sum(1 for w in wires if has_agent_log_issue(w))
+        built = {w["idempotency_key"]: payload_hash(w) for w in wires if has_agent_log_issue(w)}
+        wires = [strip_agent_log(w) for w in wires]
     to_send: list[dict[str, Any]] = []
     if ledger is None:
         to_send = wires
@@ -280,7 +404,8 @@ def deliver(
             current.add(key)
             row = ledger.bucket(key)
             digest = payload_hash(wire)
-            if row is not None and row.payload_hash == digest and row.status in (SENT, CONFLICT):
+            same = row is not None and row.payload_hash in (digest, built.get(key))
+            if row is not None and same and row.status in (SENT, CONFLICT):
                 summary.skipped_unchanged += 1
                 continue
             if row is not None and row.status == REJECTED and not retry_rejected:
@@ -295,7 +420,30 @@ def deliver(
                 summary.retried_from_queue += 1
     summary.sent = len(to_send)
     outcomes = sink.send(to_send) if to_send else []
-    conflicts = _record(outcomes, to_send, ledger, summary)
+    fallback: list[dict[str, Any]] = []
+    if ledger is not None:
+        by_key = {w["idempotency_key"]: w for w in to_send}
+        kept: list[Outcome] = []
+        for outcome in outcomes:
+            sent = by_key.get(outcome.idempotency_key)
+            if sent is not None and has_agent_log_issue(sent) and _agent_log_fallback(outcome):
+                fallback.append(sent)
+                if refuses_agent_log_source(outcome):
+                    _remember_agent_log_refused(sink, ledger, now)
+            else:
+                kept.append(outcome)
+        outcomes = kept
+    conflicts = _record(outcomes, to_send, ledger, summary, hashes=built)
+    if fallback and ledger is not None:
+        # Send once more without the issue read from the agent's log; the ledger keeps the hash of the
+        # record as built, so an unchanged bucket is not sent twice on the next push.
+        stripped = [strip_agent_log(w) for w in fallback]
+        summary.agent_log_resent = len(stripped)
+        hashes = {w["idempotency_key"]: payload_hash(w) for w in fallback}
+        again = sink.send(stripped)
+        for outcome in again:
+            outcome.warnings = [*outcome.warnings, "agent_log_dropped"]
+        conflicts.extend(_record(again, stripped, ledger, summary, hashes=hashes))
     if conflicts and ledger is not None:
         # Send once more without the explicit hints the stored entry contradicts.
         stripped = [strip_explicit(w) for w in conflicts]
@@ -327,7 +475,13 @@ def _record(
     summary: DeliverySummary,
     *,
     drop_explicit: bool | None = None,
+    hashes: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
+    """Count the outcomes and save them in the ledger; return the wires refused with attribution_conflict.
+
+    *hashes* replaces the payload hash saved for a key: the hash of the record as
+    built, when what was sent is a reduced copy of it.
+    """
     conflicts: list[dict[str, Any]] = []
     by_key = {w["idempotency_key"]: w for w in wires}
     for outcome in outcomes:
@@ -339,7 +493,7 @@ def _record(
         wire = by_key.get(outcome.idempotency_key)
         if ledger is None or wire is None:
             continue
-        digest = payload_hash(wire)
+        digest = (hashes or {}).get(outcome.idempotency_key) or payload_hash(wire)
         if outcome.accepted:
             ledger.save_bucket(
                 wire, digest, SENT, warnings=outcome.warnings, entry_id=outcome.entry_id, drop_explicit=drop_explicit

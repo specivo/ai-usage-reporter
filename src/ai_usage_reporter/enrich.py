@@ -3,7 +3,11 @@
 For each bucket:
 
 - ``issue_ref``: the ``SPECIVO_ISSUE`` captured for the session (sent with
-  ``issue_ref_source: "env"``).
+  ``issue_ref_source: "env"``); otherwise the issue of the bucket's segment,
+  the one the agent marked with its own Specivo calls (sent with
+  ``issue_ref_source: "agent_log"``).
+- ``idempotency_key``: the contract's recommended key; a segment other than
+  the session/model/day's primary one gets :func:`segment_key` of it.
 - ``git_branch``: the branch the tool logged.
 - ``repo``: the tool's logged repository URL, else the ``origin`` remote of the
   bucket's working directory, as ``host/owner/repo``. Never a path.
@@ -39,6 +43,7 @@ from datetime import datetime, timedelta
 from ai_usage_reporter.aggregate import Bucket
 from ai_usage_reporter.config import Config
 from ai_usage_reporter.record import (
+    AGENT_LOG,
     Attribution,
     ContractRecord,
     Money,
@@ -46,6 +51,7 @@ from ai_usage_reporter.record import (
     idempotency_key,
     normalise_repo,
     opaque_session_id,
+    segment_key,
 )
 
 GitRunner = Callable[[Sequence[str], str], str | None]
@@ -172,6 +178,8 @@ class Enricher:
     def record(self, bucket: Bucket) -> ContractRecord:
         session = opaque_session_id(bucket.session_id)
         key = idempotency_key(bucket.tool, session, bucket.model, bucket.usage_date)
+        if not bucket.primary_segment:
+            key = segment_key(key, bucket.segment_issue)
         cwd = bucket.cwd
         repo = normalise_repo(bucket.repo_url)
         commits: tuple[str, ...] = ()
@@ -181,9 +189,12 @@ class Enricher:
             if self.config.git_commits:
                 commits = self.git.commits(cwd, bucket.started_at, bucket.ended_at)
         issue = self.session_issues.get(bucket.session_id)
+        source = "env" if issue else None
+        if issue is None and bucket.segment_issue:
+            issue, source = bucket.segment_issue, AGENT_LOG
         attribution = Attribution(
             issue_ref=issue,
-            issue_ref_source="env" if issue else None,
+            issue_ref_source=source,
             project_key=self.config.project_for(repo, bucket.tool),
             git_branch=bucket.git_branch,
             repo=repo,

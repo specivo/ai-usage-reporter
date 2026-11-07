@@ -41,6 +41,17 @@ What the data looks like, and what this adapter does with it:
   reported under the root session, so a session's total includes the work it
   fanned out; ``push --session <child id>`` selects the root session.
 - Messages without tokens (errors, aborted requests) are skipped.
+- **Issue marks.** OpenCode 2 keeps a message's tool calls in its
+  ``content`` as parts of type ``tool``: a Specivo MCP tool called directly
+  (``name`` such as ``specivo_specivo_timer``, ``state.input``,
+  ``state.content``), or calls made from code (``state.metadata.toolCalls``,
+  each with ``tool`` such as ``specivo.specivo_timer`` and ``input``, but
+  without its result). Marking Specivo calls (see
+  :mod:`ai_usage_reporter.issue_marks`) become markers at the part's
+  ``time.created``; ``specivo_create_issue`` marks only when its result is
+  there. A child session's marks are its own (``sub_session_id``). OpenCode 1
+  kept parts in a table of their own, which is not read: its sessions are left
+  to the server's match of MCP sessions.
 
 The database is opened read-only (``mode=ro``) and only for the time of two
 ``SELECT`` statements; the reporter never writes to it, never checkpoints its
@@ -62,6 +73,7 @@ from typing import Any
 
 from ai_usage_reporter.adapters import DiscoveryContext, HookSpec
 from ai_usage_reporter.adapters._jsonl import get_dict, get_str
+from ai_usage_reporter.issue_marks import CREATE, created_issue, marking_call
 from ai_usage_reporter.model import SourceBusyError, SourceFile, TokenCounts, UsageEvent, count, parse_timestamp
 
 #: How often and how long to wait for a database OpenCode holds locked.
@@ -176,7 +188,7 @@ def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
 class OpenCodeAdapter:
     name = "opencode"
     provider = "unknown"
-    parser_version = "opencode/1"
+    parser_version = "opencode/2"
 
     def __init__(self, sleep: Callable[[float], None] = time.sleep) -> None:
         self._sleep = sleep
@@ -241,6 +253,7 @@ class OpenCodeAdapter:
             event = self._event(src, data, message_id or get_str(data, "id"), session, created, sessions)
             if event is not None:
                 yield event
+            yield from self._marks(data, session, created, sessions)
 
     @staticmethod
     def _read_rows(
@@ -293,6 +306,7 @@ class OpenCodeAdapter:
         event = self._event(src, data, get_str(data, "id") or src.path.stem, own, None, sessions, root=root or own)
         if event is not None:
             yield event
+        yield from self._marks(data, own, None, sessions, root=root or own)
 
     def _event(
         self,
@@ -336,6 +350,58 @@ class OpenCodeAdapter:
             cost=cost,
             cost_currency="USD" if cost is not None else None,
         )
+
+    def _marks(
+        self,
+        data: dict[str, Any],
+        session: str,
+        row_created: Any,
+        sessions: Mapping[str, SessionInfo],
+        *,
+        root: str | None = None,
+    ) -> Iterator[UsageEvent]:
+        """Markers for the marking Specivo calls among a message's tool parts."""
+        role = data.get("role")
+        parts = data.get("content")
+        if (role is not None and role != "assistant") or not isinstance(parts, list):
+            return
+        message_time = parse_timestamp((get_dict(data, "time") or {}).get("created")) or parse_timestamp(row_created)
+        top = root or root_of(session, sessions)
+        info = sessions.get(session)
+        for part in parts:
+            if not isinstance(part, dict) or part.get("type") != "tool":
+                continue
+            when = parse_timestamp((get_dict(part, "time") or {}).get("created")) or message_time
+            state = get_dict(part, "state") or {}
+            if when is None or state.get("status") == "error":
+                continue
+            calls: list[tuple[object, object, object]] = [
+                (part.get("name") or part.get("tool"), state.get("input"), state.get("content", state.get("output")))
+            ]
+            nested = get_dict(state, "metadata")
+            if nested is not None and isinstance(nested.get("toolCalls"), list):
+                calls.extend(
+                    (call.get("tool"), call.get("input"), None)
+                    for call in nested["toolCalls"]
+                    if isinstance(call, dict) and call.get("status") != "error"
+                )
+            for name, arguments, result in calls:
+                mark = marking_call(name, arguments)
+                if mark == CREATE:
+                    mark = created_issue(result) if result is not None else None
+                if mark is None:
+                    continue
+                yield UsageEvent(
+                    tool=self.name,
+                    session_id=top,
+                    sub_session_id=session if session != top else None,
+                    model="",
+                    timestamp=when,
+                    tokens=TokenCounts(),
+                    requests=0,
+                    cwd=get_str(data, "path", "cwd") or (info.directory if info else None),
+                    issue_mark=mark,
+                )
 
     def dedup_key(self, event: UsageEvent) -> str | None:
         if event.message_id is None:

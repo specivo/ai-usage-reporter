@@ -27,6 +27,9 @@ from typing import Any
 from ai_usage_reporter.model import TOKEN_CLASSES, TokenCounts
 
 COST_TYPES = ("subscription", "api", "local", "free", "unknown")
+#: Where an issue_ref came from: the person named it, SPECIVO_ISSUE, or the agent's own Specivo calls.
+ISSUE_REF_SOURCES = ("explicit", "env", "agent_log")
+AGENT_LOG = "agent_log"
 MAX_COUNT = 10**12
 MAX_REQUESTS = 100_000_000
 
@@ -111,6 +114,15 @@ def idempotency_key(tool: str, session_id: str, model: str, usage_date: date) ->
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+def segment_key(key: str, issue: str | None) -> str:
+    """The key of a bucket's segment other than the primary one: SHA-256 of the bucket key and the issue.
+
+    The primary segment keeps *key* itself (see :mod:`ai_usage_reporter.aggregate`).
+    """
+    text = f"{key}|segment|{issue.upper() if issue else '-'}"
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
 def opaque_session_id(raw: str) -> str:
     """The session id to send: as is when it is an opaque token, else a hash of it."""
     if _OPAQUE.match(raw):
@@ -182,7 +194,7 @@ def _attribution(value: Attribution | None) -> dict[str, Any] | None:
     out: dict[str, Any] = {}
     if value.issue_ref and _ISSUE.match(value.issue_ref):
         out["issue_ref"] = value.issue_ref
-        if value.issue_ref_source in ("explicit", "env"):
+        if value.issue_ref_source in ISSUE_REF_SOURCES:
             out["issue_ref_source"] = value.issue_ref_source
     if value.project_key and _PROJECT.match(value.project_key):
         out["project_key"] = value.project_key

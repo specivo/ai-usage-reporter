@@ -147,6 +147,8 @@ class Config:
     timezone: str | None = None
     on_behalf_of: str | None = None
     git_commits: bool = True
+    #: Split sessions by the issues the agent marked with its Specivo tool calls, and send them.
+    agent_log_issues: bool = True
     exclude_paths: tuple[str, ...] = ()
     sources: Mapping[str, SourceSettings] = field(default_factory=dict)
     cost_rules: tuple[CostRule, ...] = ()
@@ -193,13 +195,18 @@ def _str_list(data: Mapping[str, Any], key: str, where: str) -> tuple[str, ...]:
 def parse_config(data: Mapping[str, Any], path: Path | None = None) -> Config:
     known = {
         "url", "allow_insecure_http", "timezone", "on_behalf_of", "git_enrichment", "git_commits", "exclude_paths",
-        "sources", "cost_rules", "projects", "long_context",
+        "agent_log_issues", "sources", "cost_rules", "projects", "long_context",
     }  # fmt: skip
     unknown = sorted(set(data) - known)
     if unknown:
         raise ConfigError(f"unknown setting(s): {', '.join(unknown)}")
     flags: dict[str, bool] = {}
-    for name, default in (("git_commits", True), ("git_enrichment", True), ("allow_insecure_http", False)):
+    for name, default in (
+        ("git_commits", True),
+        ("git_enrichment", True),
+        ("allow_insecure_http", False),
+        ("agent_log_issues", True),
+    ):
         value = data.get(name, default)
         if not isinstance(value, bool):
             raise ConfigError(f"{name} must be true or false")
@@ -267,6 +274,7 @@ def parse_config(data: Mapping[str, Any], path: Path | None = None) -> Config:
         timezone=_opt_str(data, "timezone", ""),
         on_behalf_of=_opt_str(data, "on_behalf_of", ""),
         git_commits=flags["git_commits"],
+        agent_log_issues=flags["agent_log_issues"],
         exclude_paths=_str_list(data, "exclude_paths", ""),
         sources=sources,
         cost_rules=tuple(rules),
@@ -308,6 +316,11 @@ git_enrichment = true
 
 # Add the SHAs of commits you made during a session (needs git_enrichment).
 git_commits = true
+
+# Count a long session for each issue the agent marked with its Specivo tool
+# calls (status, assignee, timer start, created issue). Only the tool name and
+# the issue key are read from the transcript.
+agent_log_issues = true
 
 # Sessions that ran in these directories are never reported.
 exclude_paths = []

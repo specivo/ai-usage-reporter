@@ -11,12 +11,18 @@ all the tokens of a long request go to ``long_tokens`` and those of the
 others to ``tokens``. The contract's ``tokens`` and ``long_context_tokens``
 are two disjoint buckets: a request is counted wholly in one of them, and
 the record's usage is their sum (contract README, "Long-context tokens").
+
+**Issue segments.** When the requests come with their segment issues (see
+:mod:`ai_usage_reporter.segments`), a bucket is also cut by issue. Of the
+buckets of one session, model and day, the one holding the day's earliest
+request is the **primary** one: it keeps the idempotency key a bucket without
+segments has, so a bucket sent before it was split is updated in place.
 """
 
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
@@ -45,6 +51,10 @@ class Bucket:
     cost_total: Decimal = Decimal(0)
     cost_currencies: set[str] = field(default_factory=set)
     cost_complete: bool = True
+    #: The issue the agent marked for these requests (see :mod:`ai_usage_reporter.segments`).
+    segment_issue: str | None = None
+    #: Whether this bucket keeps the key of the whole session/model/day (see the module docs).
+    primary_segment: bool = True
 
     @property
     def reported_cost(self) -> tuple[Decimal, str] | None:
@@ -55,6 +65,7 @@ class Bucket:
 
     @property
     def key(self) -> tuple[str, str, str, date]:
+        """The session, model and day; the segments of one share it."""
         return (self.tool, self.session_id, self.model, self.usage_date)
 
     @property
@@ -68,11 +79,17 @@ class Bucket:
 ThresholdLookup = Callable[[str], int | None]
 
 
-def aggregate(events: Iterable[UsageEvent], threshold_for: ThresholdLookup) -> list[Bucket]:
-    buckets: dict[tuple[str, str, str, date], Bucket] = {}
-    for event in sorted(events, key=lambda e: e.timestamp):
+def aggregate(
+    events: Iterable[UsageEvent],
+    threshold_for: ThresholdLookup,
+    issues: Sequence[str | None] | None = None,
+) -> list[Bucket]:
+    """Buckets of *events*; *issues*, when given, holds each event's segment issue (same order)."""
+    pairs = list(zip(events, issues, strict=True)) if issues is not None else [(e, None) for e in events]
+    buckets: dict[tuple[str, str, str, date, str | None], Bucket] = {}
+    for event, issue in sorted(pairs, key=lambda pair: pair[0].timestamp):
         when = event.timestamp.astimezone(UTC)
-        key = (event.tool, event.session_id, event.model, when.date())
+        key = (event.tool, event.session_id, event.model, when.date(), issue)
         bucket = buckets.get(key)
         if bucket is None:
             bucket = Bucket(
@@ -82,6 +99,7 @@ def aggregate(events: Iterable[UsageEvent], threshold_for: ThresholdLookup) -> l
                 usage_date=when.date(),
                 started_at=when,
                 ended_at=when,
+                segment_issue=issue,
             )
             buckets[key] = bucket
         bucket.started_at = min(bucket.started_at, when)
@@ -100,7 +118,19 @@ def aggregate(events: Iterable[UsageEvent], threshold_for: ThresholdLookup) -> l
         if event.cwd:
             bucket.cwds[event.cwd] += 1
         _add_cost(bucket, event)
-    return sorted(buckets.values(), key=lambda b: (b.usage_date, b.tool, b.session_id, b.model))
+    _mark_primary(buckets.values())
+    return sorted(buckets.values(), key=lambda b: (b.usage_date, b.tool, b.session_id, b.model, b.segment_issue or ""))
+
+
+def _mark_primary(buckets: Iterable[Bucket]) -> None:
+    """Of each session/model/day's segments, the one with the earliest request is the primary one."""
+    groups: dict[tuple[str, str, str, date], list[Bucket]] = {}
+    for bucket in buckets:
+        groups.setdefault(bucket.key, []).append(bucket)
+    for group in groups.values():
+        first = min(group, key=lambda b: (b.started_at, b.segment_issue is not None, b.segment_issue or ""))
+        for bucket in group:
+            bucket.primary_segment = bucket is first
 
 
 def _add_cost(bucket: Bucket, event: UsageEvent) -> None:

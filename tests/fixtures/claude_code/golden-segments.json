@@ -1,0 +1,110 @@
+[
+  {
+    "attribution": {
+      "git_branch": "main",
+      "issue_ref": "ACME-12",
+      "issue_ref_source": "agent_log"
+    },
+    "ended_at": "2026-10-05T13:30:00Z",
+    "idempotency_key": "c616f0b0dd688416d1cf4f9cd84ed57abf6aaef7c769794397b4f95c9beb2493",
+    "model": "claude-sonnet-4-5",
+    "provider": "anthropic",
+    "request_count": 6,
+    "session_id": "77777777-7777-4777-8777-777777777777",
+    "started_at": "2026-10-05T08:00:10Z",
+    "tokens": {
+      "cache_read": 1800,
+      "input": 900,
+      "output": 90
+    },
+    "tool": "claude-code",
+    "tool_version": "2.0.30",
+    "usage_date": "2026-10-05"
+  },
+  {
+    "attribution": {
+      "git_branch": "main",
+      "issue_ref": "ACME-13",
+      "issue_ref_source": "agent_log"
+    },
+    "ended_at": "2026-10-05T14:00:00Z",
+    "idempotency_key": "5a5788556d1f964f435ec8e89c4ed4b307615b3359bbfddd999ed72ecc95410c",
+    "model": "claude-sonnet-4-5",
+    "provider": "anthropic",
+    "request_count": 2,
+    "session_id": "77777777-7777-4777-8777-777777777777",
+    "started_at": "2026-10-05T13:00:00Z",
+    "tokens": {
+      "cache_read": 500,
+      "input": 250,
+      "output": 25
+    },
+    "tool": "claude-code",
+    "tool_version": "2.0.30",
+    "usage_date": "2026-10-05"
+  },
+  {
+    "attribution": {
+      "git_branch": "main",
+      "issue_ref": "ACME-14",
+      "issue_ref_source": "agent_log"
+    },
+    "ended_at": "2026-10-05T15:30:00Z",
+    "idempotency_key": "b24390023d6c37a6bd0df19fc3235457703e6e0eb9cdb4f4455bf3b087d1d952",
+    "model": "claude-sonnet-4-5",
+    "provider": "anthropic",
+    "request_count": 2,
+    "session_id": "77777777-7777-4777-8777-777777777777",
+    "started_at": "2026-10-05T15:00:00Z",
+    "tokens": {
+      "cache_read": 300,
+      "input": 150,
+      "output": 15
+    },
+    "tool": "claude-code",
+    "tool_version": "2.0.30",
+    "usage_date": "2026-10-05"
+  },
+  {
+    "attribution": {
+      "git_branch": "main",
+      "issue_ref": "ACME-20",
+      "issue_ref_source": "agent_log"
+    },
+    "ended_at": "2026-10-05T10:30:00Z",
+    "idempotency_key": "c3638102ddea6bf2aac9cea0775c6a9bdb3aec866bd2e0b624c05c69634a4e44",
+    "model": "claude-sonnet-4-5",
+    "provider": "anthropic",
+    "request_count": 3,
+    "session_id": "77777777-7777-4777-8777-777777777777",
+    "started_at": "2026-10-05T10:00:05Z",
+    "tokens": {
+      "cache_read": 300,
+      "input": 150,
+      "output": 15
+    },
+    "tool": "claude-code",
+    "tool_version": "2.0.30",
+    "usage_date": "2026-10-05"
+  },
+  {
+    "attribution": {
+      "git_branch": "main"
+    },
+    "ended_at": "2026-10-05T11:03:00Z",
+    "idempotency_key": "8e7bc5c4bea496a654542b9210839f4aae0be52afe18e6a3afb74d6ef8d06ece",
+    "model": "claude-sonnet-4-5",
+    "provider": "anthropic",
+    "request_count": 4,
+    "session_id": "88888888-8888-4888-8888-888888888888",
+    "started_at": "2026-10-05T11:00:05Z",
+    "tokens": {
+      "cache_read": 480,
+      "input": 240,
+      "output": 24
+    },
+    "tool": "claude-code",
+    "tool_version": "2.0.30",
+    "usage_date": "2026-10-05"
+  }
+]

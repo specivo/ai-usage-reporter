@@ -22,6 +22,13 @@ What the transcript format looks like, and what this adapter does with it:
 - ``usage.iterations`` may hold extra model calls made for the response. Those
   of type ``advisor_message`` name their own model and are reported under it.
 - Lines with no tokens at all (locally generated messages) are skipped.
+- **Issue marks.** An ``assistant`` line's ``tool_use`` blocks that are
+  marking Specivo calls (see :mod:`ai_usage_reporter.issue_marks`) become
+  markers at the line's time; ``specivo_create_issue`` takes the created key
+  from the ``tool_result`` block with the same ``tool_use_id`` in a later
+  ``user`` line. Only the tool name, the few arguments that decide the mark
+  and the issue key are read. A subagent's markers and usage carry its
+  transcript's name as their ``thread``.
 
 ``CLAUDE_CONFIG_DIR`` moves the whole Claude config directory; the
 ``[sources.claude-code] roots`` setting lists other directories to read.
@@ -35,6 +42,7 @@ from typing import Any
 
 from ai_usage_reporter.adapters import DiscoveryContext, HookSpec
 from ai_usage_reporter.adapters._jsonl import get_str, iter_json_lines
+from ai_usage_reporter.issue_marks import CREATE, created_issue, marking_call
 from ai_usage_reporter.model import SourceFile, TokenCounts, UsageEvent, count, parse_timestamp
 
 
@@ -88,7 +96,7 @@ def _usage_tokens(usage: dict[str, Any]) -> TokenCounts:
 class ClaudeCodeAdapter:
     name = "claude-code"
     provider = "anthropic"
-    parser_version = "claude-code/1"
+    parser_version = "claude-code/2"
 
     def discover(self, ctx: DiscoveryContext) -> Iterable[SourceFile]:
         for projects in _config_dirs(ctx):
@@ -99,16 +107,24 @@ class ClaudeCodeAdapter:
     def parse(self, src: SourceFile) -> Iterator[UsageEvent]:
         file_session = src.session_hint or session_from_path(src.path)
         is_subagent_file = "subagents" in src.path.parts
+        thread = src.path.name.split(".", 1)[0] if is_subagent_file else None
+        #: specivo_create_issue calls waiting for their result: tool_use id -> (time, session, cwd).
+        creating: dict[str, tuple[Any, str, str | None]] = {}
         for line in iter_json_lines(src.path, src.stats):
             message = line.get("message")
-            if not isinstance(message, dict) or not isinstance(message.get("usage"), dict):
+            if not isinstance(message, dict):
+                continue
+            kind = line.get("type")
+            if kind in ("assistant", "user") and isinstance(message.get("content"), list):
+                yield from self._marks(line, message["content"], kind, file_session, thread, creating)
+            if not isinstance(message.get("usage"), dict):
                 continue
             when = parse_timestamp(line.get("timestamp"))
             if when is None:
                 src.stats.skipped_events += 1
                 continue
             # A subagent file always folds into the session directory it sits in.
-            session = file_session if is_subagent_file else (get_str(line, "sessionId") or file_session)
+            session = file_session if thread is not None else (get_str(line, "sessionId") or file_session)
             branch = get_str(line, "gitBranch")
             common: dict[str, Any] = {
                 "tool": self.name,
@@ -121,6 +137,7 @@ class ClaudeCodeAdapter:
                 "git_branch": branch if branch and branch != "HEAD" else None,
                 "cwd": get_str(line, "cwd"),
                 "source_path": str(src.path),
+                "thread": thread,
             }
             message_id = get_str(message, "id")
             main = self._event(common, get_str(message, "model"), message_id, message["usage"])
@@ -136,6 +153,56 @@ class ClaudeCodeAdapter:
                     if extra is not None:
                         src.stats.events += 1
                         yield extra
+
+    def _marks(
+        self,
+        line: dict[str, Any],
+        blocks: list[Any],
+        kind: object,
+        file_session: str,
+        thread: str | None,
+        creating: dict[str, tuple[Any, str, str | None]],
+    ) -> Iterator[UsageEvent]:
+        """Markers for the marking Specivo calls of one line (see :mod:`ai_usage_reporter.issue_marks`)."""
+        session = file_session if thread is not None else (get_str(line, "sessionId") or file_session)
+        cwd = get_str(line, "cwd")
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            if kind == "assistant" and block.get("type") == "tool_use":
+                mark = marking_call(block.get("name"), block.get("input"))
+                if mark is None:
+                    continue
+                when = parse_timestamp(line.get("timestamp"))
+                if when is None:
+                    continue
+                if mark == CREATE:
+                    call_id = get_str(block, "id")
+                    if call_id is not None:
+                        creating.setdefault(call_id, (when, session, cwd))
+                    continue
+                yield self._marker(mark, when, session, cwd, thread)
+            elif kind == "user" and block.get("type") == "tool_result":
+                call_id = get_str(block, "tool_use_id")
+                pending = creating.pop(call_id, None) if call_id is not None else None
+                if pending is None or block.get("is_error") is True:
+                    continue
+                key = created_issue(block.get("content"))
+                if key is not None:
+                    yield self._marker(key, pending[0], pending[1], pending[2], thread)
+
+    def _marker(self, issue: str, when: Any, session: str, cwd: str | None, thread: str | None) -> UsageEvent:
+        return UsageEvent(
+            tool=self.name,
+            session_id=session,
+            model="",
+            timestamp=when,
+            tokens=TokenCounts(),
+            requests=0,
+            cwd=cwd,
+            thread=thread,
+            issue_mark=issue,
+        )
 
     @staticmethod
     def _event(

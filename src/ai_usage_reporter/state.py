@@ -12,6 +12,8 @@
   from the stored payload even after the tool deleted its logs.
 - ``session_hints``: the ``SPECIVO_ISSUE`` captured for a session.
 - ``runs``: a summary of each push, for ``status`` and ``doctor``.
+- ``meta``: the schema version, and whether the server refused
+  ``issue_ref_source: "agent_log"`` lately (see :mod:`ai_usage_reporter.pipeline`).
 """
 
 from __future__ import annotations
@@ -333,6 +335,18 @@ class State:
 
     def session_issues(self) -> dict[str, str]:
         return {r["session_id"]: r["issue_ref"] for r in self.db.execute("SELECT * FROM session_hints")}
+
+    # -- meta --------------------------------------------------------------------
+
+    def meta(self, key: str) -> str | None:
+        row = self.db.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return str(row["value"]) if row is not None else None
+
+    def set_meta(self, key: str, value: str | None) -> None:
+        if value is None:
+            self.db.execute("DELETE FROM meta WHERE key = ?", (key,))
+        else:
+            self.db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
 
     # -- runs --------------------------------------------------------------------
 
