@@ -231,3 +231,29 @@ def test_a_refusal_is_forgotten_after_a_while(server: FakeServer) -> None:
         state.set_meta(AGENT_LOG_META, json.dumps({"url": _sink(server).url, "until": past}))
         deliver([record], _sink(server), state)
         assert server.posts[-1][0]["attribution"]["issue_ref_source"] == "agent_log"
+
+
+def test_records_sent_without_their_issue_go_again_once_the_server_takes_agent_log(server: FakeServer) -> None:
+    record = make_record(attribution=AGENT_LOG)
+    with State.in_memory() as state:
+        server.info["issue_ref_sources"] = ["explicit", "env"]
+        deliver([record], _sink(server), state)
+        assert "issue_ref" not in server.posts[-1][0]["attribution"]
+        assert deliver([record], _sink(server), state).sent == 0
+        # The server is upgraded: the unchanged bucket goes once more, now with its issue.
+        server.info["issue_ref_sources"] = ["explicit", "env", "agent_log"]
+        assert deliver([record], _sink(server), state).sent == 1
+        assert server.posts[-1][0]["attribution"]["issue_ref_source"] == "agent_log"
+        assert deliver([record], _sink(server), state).sent == 0
+
+
+def test_without_the_server_saying_so_an_unchanged_bucket_is_not_retried(server: FakeServer) -> None:
+    def not_found(records: list[dict[str, Any]]) -> HttpResponse:
+        error = {"code": "not_found", "message": "no such issue", "field": "attribution.issue_ref"}
+        return ok(records, lambda i, r: result_item(i, r["idempotency_key"], "rejected", error=error))
+
+    server.responders = [not_found]
+    record = make_record(attribution=AGENT_LOG)
+    with State.in_memory() as state:
+        deliver([record], _sink(server), state)
+        assert deliver([record], _sink(server), state).sent == 0

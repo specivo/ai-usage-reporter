@@ -369,6 +369,12 @@ def _agent_log_unsupported(sink: Sink, state: State | None, now: datetime) -> bo
     return memo.get("url") == getattr(sink, "url", None) and now < until
 
 
+def _agent_log_supported(sink: Sink) -> bool:
+    """Whether the server says it takes agent_log issues (it lists the value in its info)."""
+    check = getattr(sink, "supports_issue_ref_source", None)
+    return bool(callable(check) and check(AGENT_LOG))
+
+
 def _remember_agent_log_refused(sink: Sink, state: State, now: datetime) -> None:
     memo = {"url": getattr(sink, "url", None), "until": (now + AGENT_LOG_RETRY_AFTER).isoformat()}
     state.set_meta(AGENT_LOG_META, json.dumps(memo))
@@ -399,12 +405,17 @@ def deliver(
         to_send = wires
     else:
         current = set()
+        # A record sent without its agent_log issue (to a server that did not take them) goes again
+        # with the issue once the server says it takes them, even if the bucket did not change.
+        upgrade = not built and _agent_log_supported(sink)
         for wire in wires:
             key = wire["idempotency_key"]
             current.add(key)
             row = ledger.bucket(key)
             digest = payload_hash(wire)
             same = row is not None and row.payload_hash in (digest, built.get(key))
+            if same and row is not None and upgrade and has_agent_log_issue(wire):
+                same = has_agent_log_issue(row.payload)
             if row is not None and same and row.status in (SENT, CONFLICT):
                 summary.skipped_unchanged += 1
                 continue
