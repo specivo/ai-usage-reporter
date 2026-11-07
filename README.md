@@ -125,7 +125,8 @@ that runs past midnight UTC, or switches models, becomes several records. Each r
 - the tool's session id (an opaque id; anything else is replaced by a hash);
 - the cost the tool reported, when it reports one for every request of the bucket (OpenCode);
 - the first and last request of the bucket, as UTC timestamps;
-- attribution hints: the issue from `SPECIVO_ISSUE`, the git branch, the repository as
+- attribution hints: the issue from `SPECIVO_ISSUE` or, without it, the issue the agent marked
+  with its own Specivo tool calls (see below), the git branch, the repository as
   `host/owner/repo` (never a path, never credentials), SHAs of commits you made during the session,
   and a project key from your repository mapping;
 - cost hints from your config (`cost_type`, `subscription_hint`) and `on_behalf_of` for service
@@ -134,10 +135,18 @@ that runs past midnight UTC, or switches models, becomes several records. Each r
 Subagent work (Claude Code's Task tool and sidechains, Gemini CLI subagents, OpenCode child
 sessions) is counted in its parent session, so a session's total includes what it fanned out.
 
+A long session that works on several issues is split by the issues the agent marked: when it
+changes an issue's status or assignee, starts a timer on one or creates one through Specivo's MCP
+tools, its usage from then on counts for that issue, and usage before the first mark counts for the
+first marked issue. Subagents count for the issue they marked, else for the one the session worked
+on when they started. Only the tool name and the issue key are read from those calls. Claude Code,
+Codex and OpenCode 2 transcripts show the calls; `agent_log_issues = false` turns it off.
+
 ## Privacy
 
-- **Never sent, never printed, never logged:** prompts, responses, code, tool input and output,
-  file paths, working directories, file names, git remote credentials.
+- **Never sent, never printed, never logged:** prompts, responses, code, tool input and output
+  (of the agent's Specivo calls only the tool name and the issue key are read), file paths,
+  working directories, file names, git remote credentials.
 - The record that goes on the wire is a separate type with exactly the contract's fields. It is
   built from an allowlist, field by field, and every value is checked against the contract's
   format; anything that does not fit is left out.

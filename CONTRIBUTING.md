@@ -65,6 +65,10 @@ class Adapter(Protocol):
       hook may call, selects the parent session).
 - [ ] When the tool logs what a request cost, set `cost` (a decimal string) and `cost_currency`
       (ISO 4217). A bucket sends `reported_cost` only when all its requests have one.
+- [ ] When the log keeps the agent's MCP tool calls with their arguments, yield a marker
+      (`issue_mark` set, no tokens, `requests=0`) for each marking Specivo call, using
+      `ai_usage_reporter.issue_marks.marking_call` and `created_issue`; read nothing else of the
+      call. A subagent with a transcript of its own sets `thread` on its usage and markers.
 - [ ] Bump `parser_version` whenever parsing changes; the reporter then parses every file of the
       adapter again.
 

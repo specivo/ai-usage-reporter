@@ -223,17 +223,65 @@ the ingest contract bundled with the reporter,
    SPECIVO_ISSUE=ACME-12 ai-usage push --session 0f6c2a1e-...
    ```
 
-2. Specivo's own record of an agent working on an issue over MCP during the session.
-3. **Commits** you made in the session's repository while it ran (found with `git log`, by your
+2. **The issues the agent marked** with its own Specivo tool calls, read from the tool's
+   transcript (see below).
+3. Specivo's own record of an agent working on an issue over MCP during the session.
+4. **Commits** you made in the session's repository while it ran (found with `git log`, by your
    `git config user.email`).
-4. **The branch**, when its name holds an issue key such as `feat/acme-12-login`.
-5. **The repository**: a `[projects]` mapping in your config names the project; otherwise
+5. **The branch**, when its name holds an issue key such as `feat/acme-12-login`.
+6. **The repository**: a `[projects]` mapping in your config names the project; otherwise
    Specivo matches `host/owner/repo` to a connected repository.
 
 Once an entry is attributed in Specivo, later pushes keep that attribution. If a push names a
 different issue or project, Specivo refuses it with `attribution_conflict`. The reporter then
 sends the bucket once more without the issue and project it named, so the totals stay current, and
 lists the bucket in `ai-usage status`. Move the entry in Specivo if the old attribution is wrong.
+
+### Long sessions on several issues
+
+People keep one agent session open for hours, and the agent works on one issue after another or
+starts subagents for several at once. The agent says which issue it works on when it calls
+Specivo's MCP tools, and the transcript keeps those calls. The reporter reads them and splits the
+session into **issue segments**:
+
+- **Marking calls**: `specivo_update_issue` that changes the status or the assignee,
+  `specivo_timer` with `op = "start"`, and `specivo_create_issue` (the new key, from the tool's
+  answer). Reading an issue, commenting or other calls mark nothing. The MCP server may have any
+  name.
+- Usage from one marking call to the next counts for that call's issue. Usage before the first
+  marking call counts for the first marked issue: the research before the issue existed.
+- A subagent counts for the issue it marked itself; one that marked none counts for the issue the
+  session worked on when the subagent started. Parallel subagents on different issues each count
+  for their own.
+- A session that never marks an issue is reported as before.
+
+Each segment becomes its own record (one session, model, UTC day and issue), sent with
+`"issue_ref_source": "agent_log"`. Specivo treats it as a strong hint, not as your choice: it
+replaces an issue found from commits or the branch and refines an entry that only has a project,
+but never an issue you set with `SPECIVO_ISSUE` or moved by hand, and an issue it cannot use is
+dropped with a warning instead of refusing the record. `SPECIVO_ISSUE` wins for the whole session.
+
+The segment holding the day's first request keeps the record's usual key, so a bucket pushed before
+the split is updated in place. When a later push moves usage to another segment, a key that no
+longer has any is sent with zero tokens, so the day's total in Specivo stays right.
+
+Only the tool name, the arguments that decide the mark (`issue_ref`, `status_id`,
+`assigned_to_id`, `op`) and the issue key in `specivo_create_issue`'s answer are read. Nothing else
+of those calls leaves your machine. `ai-usage show-payload` shows the issue of each record.
+
+| Tool | Segments |
+|---|---|
+| Claude Code | Yes, main thread and subagents |
+| Codex | Yes (`function_call` and `mcp_tool_call_end` in the rollout) |
+| OpenCode 2 | Yes, for status, assignee and timer calls (also calls made from code); a created issue's key is only read from a direct call's answer. Child sessions are threads of their root session |
+| OpenCode 1, Gemini CLI, `import ccusage` | Not read (OpenCode 1 keeps tool calls in a table of their own, ccusage has day totals only); Specivo's own match of MCP sessions (step 3) still applies |
+
+Set `agent_log_issues = false` to turn it off: sessions are then reported as one record per
+model and day again (segments already pushed are sent with zero tokens).
+
+A Specivo server older than this feature refuses `agent_log`. The reporter then sends those
+records again without the issue, so the totals stay right, and leaves the issue out for the next
+seven days before trying again.
 
 ## Days are UTC
 
@@ -292,8 +340,9 @@ your repositories in `[projects]` to get the precise reasons.
 
 - **Sent:** token counts, request counts, the tool, its version, the provider and model, the
   tool's session id, the bucket's UTC day and first and last request time, the git branch, the
-  repository as `host/owner/repo`, commit SHAs, the issue from `SPECIVO_ISSUE`, the project key
-  from your mapping, cost hints and `on_behalf_of`.
+  repository as `host/owner/repo`, commit SHAs, the issue from `SPECIVO_ISSUE` or the issue key
+  the agent marked with its Specivo tool calls, the project key from your mapping, cost hints and
+  `on_behalf_of`.
 - **Never sent, printed or logged:** prompts, responses, code, tool input and output, file paths,
   working directories, file names, remote URLs with credentials.
 - The record sent is built from an allowlist and checked field by field against the contract.
@@ -328,6 +377,7 @@ your repositories in `[projects]` to get the precise reasons.
 | `timezone` | Time zone for times shown by `status` (buckets are always UTC days) |
 | `on_behalf_of` | The login usage is reported for (service accounts) |
 | `git_commits` | Add SHAs of your commits made during the session (default `true`; needs `git_enrichment`) |
+| `agent_log_issues` | Split long sessions by the issues the agent marked with its Specivo tool calls and send them (default `true`); see [Long sessions on several issues](#long-sessions-on-several-issues) |
 | `exclude_paths` | Sessions that ran in these directories are never reported |
 | `[sources.<name>]` | `enabled = false` turns a source off; `roots = [...]` reads other directories; `via = "ccusage"` counts the tool through `import ccusage` instead of its logs; `project = "KEY"` is the tool's project when no `[projects]` repository pattern matches (for example sessions outside any git repository) |
 | `[[cost_rules]]` | `tool`, `model`, `repo` (patterns) → `cost_type`, `subscription_hint`; the first match wins |

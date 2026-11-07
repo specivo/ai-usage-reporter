@@ -70,12 +70,16 @@ works (the web app's cookie), but reporters should use a key.
   "rate_limit": {"requests": 60, "window_seconds": 60},
   "server_time": "2026-11-06T12:00:00.123456Z",
   "tools": ["claude-code", "codex", "gemini-cli"],
-  "currencies": ["EUR", "THB", "USD"]
+  "currencies": ["EUR", "THB", "USD"],
+  "issue_ref_sources": ["explicit", "env", "agent_log"]
 }
 ```
 
 A reporter can call it once at start-up to check that the server speaks its version and to
 compare clocks. `rate_limit` is `null` when the server does not limit batches.
+`issue_ref_sources` lists the values of `attribution.issue_ref_source` the server knows; a
+server that leaves it out knows `explicit` and `env` only, and a reporter should not send it
+`agent_log` (see [Issue attribution](#issue-attribution)).
 
 ## The batch
 
@@ -263,6 +267,7 @@ stored with the entry as its `attribution_method`.
 | Step | Hint | `attribution_method` | Kind |
 |---|---|---|---|
 | 1 | `attribution.issue_ref`, e.g. `ACME-12` | `explicit`, or `env` when `issue_ref_source` is `env` | explicit |
+| 1a | `attribution.issue_ref` with `issue_ref_source` `agent_log` | `agent_log` | inferred |
 | 2 | The issue of a Specivo MCP agent session that overlaps `[started_at, ended_at]` | `mcp_session` | inferred |
 | 3 | `attribution.commits` linked to an issue in Specivo | `commit` | inferred |
 | 4 | An issue key in `attribution.git_branch`, e.g. `feat/acme-12-login` | `branch` | inferred |
@@ -274,6 +279,12 @@ Details of each step:
 
 1. `issue_ref` is the issue the person named, typically from the `SPECIVO_ISSUE` environment
    variable (send `"issue_ref_source": "env"` then). Upper or lower case both work.
+
+   1a. With `"issue_ref_source": "agent_log"`, `issue_ref` is the issue the agent itself marked
+   with its Specivo tool calls, as the reporter read them from the tool's local transcript (see
+   [Issues from the agent's log](#issues-from-the-agents-log)). It is a hint, not a choice the
+   person made: when it cannot be used, it is dropped with `attribution_dropped` and the next
+   step is tried.
 2. Agent sessions are opened when an agent uses Specivo's MCP server; the session records the
    issue the agent is working on. The step needs at least one of `started_at` and `ended_at`
    (one alone is a window of one instant). When several sessions overlap, the one sharing the
@@ -289,6 +300,10 @@ Details of each step:
    `acme/app`; the host is ignored and the path is compared with the repositories connected in
    Specivo. If the repository is connected to more than one project the target user can log
    to, the record stays unassigned with the warning `attribution_ambiguous`.
+
+**Precedence.** `issue_ref` from `env` or `explicit` > `agent_log` > the inferred steps 2 to
+5b. A reporter sends one `issue_ref` per record: `SPECIVO_ISSUE` when the person set it,
+otherwise the agent's issue.
 
 **Explicit versus inferred.** The person chose explicit hints, so the server never ignores
 them:
@@ -312,6 +327,43 @@ person in Specivo), its attribution stays:
 - An inferred result that differs is not applied: the record is stored with the warning
   `attribution_dropped`.
 - An unassigned entry takes the attribution of a later send.
+- An `agent_log` issue may refine an entry attributed to a project only (an issue of that
+  project) and replace an inferred attribution (including an earlier `agent_log` one, since a
+  reporter may learn of a mark later). It never replaces an explicit attribution or one a
+  person made in Specivo; it is dropped with `attribution_dropped` there, never refused with
+  `attribution_conflict`.
+
+### Issues from the agent's log
+
+Long agent sessions often work on several issues, one after the other or in parallel
+subagents. A reporter that can read the agent's own Specivo tool calls in the local transcript
+may split a session into **issue segments** and send the issue of each as `issue_ref` with
+`"issue_ref_source": "agent_log"`.
+
+- **Marking calls** are `specivo_update_issue` with `status_id` or `assigned_to_id`,
+  `specivo_timer` with `op` `start` (both: their `issue_ref`) and `specivo_create_issue` (the key
+  at the start of its result, `Created issue ACME-12: ...`). The MCP server's name in front of
+  the tool name does not matter. Other calls (`specivo_show_issue`, ...) mark nothing.
+- **Main thread.** Usage from one marking call to the next belongs to that call's issue. Usage
+  before the session's first marking call belongs to the first marked issue (research before the
+  issue existed). A session without marking calls has no segment issue.
+- **Subagents** (a subagent's transcript, a child session) follow their own marking calls the
+  same way; one without any takes the main thread's issue at the time it started.
+- **Records.** A bucket becomes one session of one tool, with one model, on one UTC day, for
+  one segment issue. Of the segments of one session, model and day, the one holding the day's
+  earliest request keeps the recommended key (so a bucket sent before the split is updated in
+  place); each other segment's key is the lower-case hex SHA-256 of
+  `<that key>|segment|<ISSUE-KEY>` (`-` for a segment without an issue).
+- When the split of a session, model and day changes later (a first mark moves the usage
+  before it), a key that no longer has usage is sent again with all-zero `tokens`, so the
+  day's totals stay correct.
+- **Privacy.** Only the tool name, the arguments that decide the mark (`issue_ref`,
+  `status_id`, `assigned_to_id`, `op`) and the issue key in `specivo_create_issue`'s result are
+  read. The key is sent as `issue_ref`; nothing else of the calls, their arguments or their
+  results leaves the machine.
+- A server that does not list `agent_log` in `issue_ref_sources` refuses the value as
+  `invalid_record`. A reporter then sends the record again without `issue_ref` and
+  `issue_ref_source`, so the totals stay current.
 
 ## The response
 
@@ -381,7 +433,7 @@ on its own: a rejected record never affects the others.
 
 | Code | Meaning |
 |---|---|
-| `attribution_dropped` | An inferred issue or project was not used (see [Issue attribution](#issue-attribution)) |
+| `attribution_dropped` | An inferred issue or project (or an `agent_log` issue) was not used (see [Issue attribution](#issue-attribution)) |
 | `attribution_ambiguous` | The repository matches several projects; the record stays unassigned |
 | `unknown_fields` | The record held properties this server does not know; they were ignored |
 
@@ -417,7 +469,8 @@ the record was rejected; an unknown warning code means it was stored.
 
 - **Within v1, changes are additive.** New optional properties may appear in records, in the
   batch and in responses. Nothing required is added, nothing is removed, and no meaning
-  changes.
+  changes. Additions so far: the `issue_ref_source` value `agent_log` and the `GET` property
+  `issue_ref_sources` that tells a reporter whether the server knows it.
 - **Clarifications** within v1 make explicit what the contract always meant and how Specivo
   has always processed it; they do not change the format. One so far: `tokens` and
   `long_context_tokens` are disjoint buckets whose sum is the usage (see

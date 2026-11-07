@@ -1,6 +1,6 @@
 [project]
 name = "specivo-ai-usage-reporter"
-version = "0.2.0"
+version = "0.3.0"
 description = "Read the local logs of AI coding tools and report their token usage to Specivo, privately"
 readme = "README.md"
 license = "MIT"
