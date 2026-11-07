@@ -124,6 +124,17 @@ def test_init_stores_the_key_privately(tmp_path: Path, monkeypatch: pytest.Monke
     assert "spv_" not in (tmp_path / "cfg" / "config.toml").read_text()
 
 
+def test_init_without_a_terminal_asks_for_key_stdin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("AI_USAGE_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    code = cli.main(["init", "--url", "https://specivo.example.com", "--no-keyring", "--offline"])
+    _, err = capsys.readouterr()
+    assert code != 0 and "--key-stdin" in err and "Traceback" not in err
+    assert not (tmp_path / "cfg" / "api-key").exists()
+
+
 def test_errors_are_short(env: dict[str, Path], capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main(["push", "--source", "nope"]) == 2
     assert cli.main(["push", "--since", "yesterday"]) == 2

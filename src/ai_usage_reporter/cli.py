@@ -187,7 +187,12 @@ def cmd_init(args: argparse.Namespace) -> int:
     if args.key_stdin:
         key = sys.stdin.readline().strip()
     else:
-        key = getpass.getpass("API key (spv_..., not shown): ").strip()
+        if not sys.stdin.isatty():
+            raise CliError("no terminal to ask for the API key; pipe it in with --key-stdin")
+        try:
+            key = getpass.getpass("API key (spv_..., not shown): ").strip()
+        except EOFError:
+            raise CliError("no API key given; pipe it in with --key-stdin") from None
     if not key:
         raise CliError("no API key given")
     where = store_api_key(url, key, cfg_path.parent, use_keyring=not args.no_keyring)
