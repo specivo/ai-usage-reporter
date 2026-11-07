@@ -12,6 +12,7 @@
     ],
     "attribution-steps.json": [
       {"status": "created", "method": "env", "issue_ref": "ACME-12", "project_key": "ACME"},
+      {"status": "created", "method": "agent_log", "issue_ref": "ACME-7", "project_key": "ACME"},
       {"status": "created", "method": "commit", "issue_ref": "ACME-3", "project_key": "ACME"},
       {"status": "created", "method": "branch", "issue_ref": "ACME-7", "project_key": "ACME"},
       {"status": "created", "method": "explicit", "issue_ref": null, "project_key": "ACME"},

@@ -11,6 +11,18 @@
       "attribution": {"issue_ref": "ACME-12", "issue_ref_source": "env"}
     },
     {
+      "idempotency_key": "example-attribution-agent-log",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 100, "output": 50},
+      "attribution": {
+        "issue_ref": "ACME-7",
+        "issue_ref_source": "agent_log",
+        "commits": ["32fe3796ff2245cb43d05a41280745a53a12bd54"]
+      }
+    },
+    {
       "idempotency_key": "example-attribution-commit",
       "tool": "claude-code",
       "model": "claude-sonnet-4-5",

@@ -148,10 +148,12 @@
                   "enum": [
                     "explicit",
                     "env",
+                    "agent_log",
                     "mcp_session",
                     "commit",
                     "branch",
                     "repo",
+                    "manual",
                     "none"
                   ]
                 },

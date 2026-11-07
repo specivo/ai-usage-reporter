@@ -312,26 +312,32 @@ them:
   cannot see, or where the usage cannot be logged **rejects the record** (`not_found`,
   `forbidden`, `target_not_member`). An `issue_ref` outside the `project_key` sent with it is
   `attribution_invalid`.
-- An inferred issue or project where the target user cannot log is **dropped**: the record
-  gets the warning `attribution_dropped`, and the next step is tried.
-- When `project_key` is sent without `issue_ref`, steps 2 to 4 only accept issues of that
-  project; others are dropped with `attribution_dropped`.
+- An `agent_log` issue, or an inferred issue or project, where the target user cannot log is
+  **dropped**: the record gets the warning `attribution_dropped`, and the next step is tried.
+- When `project_key` is sent without an explicit `issue_ref`, an `agent_log` issue and steps 2
+  to 4 only accept issues of that project; others are dropped with `attribution_dropped` (never
+  `attribution_invalid`).
 - A warning never names an issue the reporting account cannot see.
 
 **Replays.** When the bucket already exists and is attributed (by an earlier send or by a
-person in Specivo), its attribution stays:
+person in Specivo), its attribution mostly stays. A later send may only add precision:
 
-- A record without attribution hints keeps it.
-- An explicit hint naming another project or issue **rejects the record** with
-  `attribution_conflict`. Send it without attribution, or move the entry in Specivo.
-- An inferred result that differs is not applied: the record is stored with the warning
-  `attribution_dropped`.
-- An unassigned entry takes the attribution of a later send.
-- An `agent_log` issue may refine an entry attributed to a project only (an issue of that
-  project) and replace an inferred attribution (including an earlier `agent_log` one, since a
-  reporter may learn of a mark later). It never replaces an explicit attribution or one a
-  person made in Specivo; it is dropped with `attribution_dropped` there, never refused with
-  `attribution_conflict`.
+| Stored entry | Later send finds | Result |
+|---|---|---|
+| Unassigned (`none`) | anything | applied, as for a new record |
+| Moved by a person in Specivo (`manual`) | anything else | kept; `attribution_dropped` (an explicit hint that does not exist or cannot be seen is still rejected) |
+| Project only | an issue of that project (explicit, `agent_log` or inferred) the usage can be logged to | **refined**: the issue and its method are applied |
+| Project only | explicit `issue_ref` or `project_key` elsewhere | rejected, `attribution_conflict` |
+| Project only, from `repo` | `agent_log` issue in another project | replaced by the `agent_log` issue |
+| Project only, from `project_key` | `agent_log` issue in another project | kept; `attribution_dropped` |
+| Project only | inferred issue in another project | kept; `attribution_dropped` |
+| Issue from `agent_log` or inferred (`mcp_session`, `commit`, `branch`) | another `agent_log` issue | replaced by the `agent_log` issue |
+| Issue (any other case) | explicit hint naming another issue or project | rejected, `attribution_conflict` |
+| Issue (any other case) | another `agent_log` or inferred issue | kept; `attribution_dropped` |
+
+A record without attribution hints always keeps the stored attribution. An `agent_log` issue is
+never answered with `attribution_conflict`. When a person moves an entry in Specivo (web, API or
+MCP), its `attribution_method` becomes `manual`, and no later send changes it.
 
 ### Issues from the agent's log
 
