@@ -60,7 +60,7 @@ jobs:
         shell: bash
         run: |
           case "$RUNNER_OS" in
-            Windows) schtasks /Query /TN SpecivoAIUsageReporter ;;
+            Windows) MSYS_NO_PATHCONV=1 schtasks /Query /TN SpecivoAIUsageReporter ;;
             macOS) launchctl print "gui/$(id -u)/io.specivo.ai-usage-reporter" >/dev/null ;;
             Linux) systemctl --user list-timers ai-usage-reporter.timer | grep -q ai-usage-reporter ;;
           esac

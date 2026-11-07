@@ -87,6 +87,17 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
+def _as_int64(value: int) -> int:
+    """*value* folded into SQLite's signed 64-bit INTEGER range.
+
+    Windows file IDs and volume serial numbers can use all 64 bits (ReFS file
+    IDs even 128), which SQLite cannot store. The identity only has to change
+    when the file does, so keeping the low 64 bits as a signed number is enough.
+    """
+    value &= (1 << 64) - 1
+    return value - (1 << 64) if value >= 1 << 63 else value
+
+
 @dataclass(frozen=True, slots=True)
 class FileIdentity:
     inode: int
@@ -107,7 +118,7 @@ class FileIdentity:
             # A write to the companion changes its size or its modification time.
             size += other.st_size
             mtime_ns = max(mtime_ns, other.st_mtime_ns)
-        return cls(inode=st.st_ino, device=st.st_dev, size=size, mtime_ns=mtime_ns)
+        return cls(inode=_as_int64(st.st_ino), device=_as_int64(st.st_dev), size=size, mtime_ns=mtime_ns)
 
 
 @dataclass(frozen=True, slots=True)
