@@ -135,6 +135,14 @@ def test_init_without_a_terminal_asks_for_key_stdin(
     assert not (tmp_path / "cfg" / "api-key").exists()
 
 
+def test_init_refuses_what_is_not_an_api_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_USAGE_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setattr("sys.stdin", io.StringIO("https://specivo.example.com/my/api-keys/\n"))
+    code = cli.main(["init", "--url", "https://specivo.example.com", "--key-stdin", "--no-keyring", "--offline"])
+    assert code != 0
+    assert not (tmp_path / "cfg" / "api-key").exists()
+
+
 def test_errors_are_short(env: dict[str, Path], capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main(["push", "--source", "nope"]) == 2
     assert cli.main(["push", "--since", "yesterday"]) == 2

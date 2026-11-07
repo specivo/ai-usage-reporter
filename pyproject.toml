@@ -35,7 +35,7 @@ zstd = ["zstandard>=0.22"]
 
 [project.urls]
 Homepage = "https://specivo.io"
-Documentation = "https://specivo.io/docs/ai-usage-reporter/"
+Documentation = "https://github.com/specivo/ai-usage-reporter/blob/main/docs/index.md"
 Repository = "https://github.com/specivo/ai-usage-reporter"
 Issues = "https://github.com/specivo/ai-usage-reporter/issues"
 

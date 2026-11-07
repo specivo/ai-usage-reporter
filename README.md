@@ -12,7 +12,7 @@ and adds it to the project's spend reports.
 - Sends counts and ids only. Prompts, code, tool output and file paths never leave your machine
   (see [Privacy](#privacy)).
 
-Full documentation: <https://specivo.io/docs/ai-usage-reporter/> (the Markdown sources are in [`docs/`](docs/)).
+Full documentation: [`docs/index.md`](docs/index.md), shipped with the package.
 
 Claude Code is a product of Anthropic, Codex of OpenAI, Gemini CLI of Google, and OpenCode and
 ccusage are open-source projects. This tool is not affiliated with or endorsed by any of them; their

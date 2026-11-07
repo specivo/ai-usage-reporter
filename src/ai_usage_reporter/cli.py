@@ -195,6 +195,8 @@ def cmd_init(args: argparse.Namespace) -> int:
             raise CliError("no API key given; pipe it in with --key-stdin") from None
     if not key:
         raise CliError("no API key given")
+    if not key.startswith("spv_") or any(ch.isspace() for ch in key):
+        raise CliError("that is not a Specivo API key (they start with spv_); nothing was stored")
     where = store_api_key(url, key, cfg_path.parent, use_keyring=not args.no_keyring)
     print("Stored the API key in the OS keychain." if where == "keychain" else "Stored the API key in a private file.")
     if not args.offline:

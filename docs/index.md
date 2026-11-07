@@ -213,7 +213,8 @@ ai-usage import ccusage usage.json
 ## Which issue the usage counts for
 
 Each record carries hints; Specivo decides (see
-[Reporting AI usage](../specivo/ai-agents/reporting-ai-usage.md#which-issue-the-usage-counts-for)):
+the ingest contract bundled with the reporter,
+[`contract/v1/README.md`](../src/ai_usage_reporter/contract/v1/README.md#issue-attribution)):
 
 1. **`SPECIVO_ISSUE`**. Set it when you push one session, and that session is reported for the
    issue, now and on every later push:
