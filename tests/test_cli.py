@@ -202,3 +202,23 @@ def test_via_ccusage_keeps_push_away_from_the_tool(env: dict[str, Path], capsys:
     assert cli.main(["doctor", "--offline"]) in (0, 1)
     out, _ = capsys.readouterr()
     assert "instead of their logs: codex" in out
+
+
+def test_init_reuses_the_configured_url_to_replace_the_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (cfg / "config.toml").write_text('url = "https://specivo.example.com"\n', encoding="utf-8")
+    monkeypatch.setenv("AI_USAGE_CONFIG_DIR", str(cfg))
+    monkeypatch.setattr("sys.stdin", io.StringIO("spv_replacement\n"))
+    assert cli.main(["init", "--key-stdin", "--no-keyring", "--offline"]) == 0
+    assert (cfg / "api-key").read_text().strip() == "spv_replacement"
+    assert (cfg / "config.toml").read_text() == 'url = "https://specivo.example.com"\n'
+
+
+def test_init_without_url_or_config_does_not_prompt_when_piped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("AI_USAGE_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setattr("sys.stdin", io.StringIO("spv_x\n"))
+    assert cli.main(["init", "--key-stdin", "--no-keyring", "--offline"]) != 0
+    assert "--url" in capsys.readouterr().err

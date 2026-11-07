@@ -171,7 +171,16 @@ def _make_sink(args: argparse.Namespace, config: Config, cfg_path: Path) -> Sink
 
 def cmd_init(args: argparse.Namespace) -> int:
     cfg_path, _ = _paths(args)
-    url = args.url or input("Specivo URL (https://...): ").strip()
+    url = args.url
+    if not url and cfg_path.exists() and not args.force:
+        try:
+            url = load_config(cfg_path).url
+        except ConfigError as exc:
+            raise CliError(str(exc)) from None
+    if not url:
+        if not sys.stdin.isatty() or args.key_stdin:
+            raise CliError("no server URL: pass --url https://...")
+        url = input("Specivo URL (https://...): ").strip()
     try:
         url = check_server_url(url, allow_insecure_http=args.allow_insecure_http)
     except ConfigError as exc:
