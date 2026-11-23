@@ -13,7 +13,7 @@ state      macOS ``~/Library/Application Support/...``  ``AI_USAGE_STATE_DIR``
            else ``$XDG_STATE_HOME/ai-usage-reporter``
 =========  ===========================================  =========================
 
-See ``docs/configuration.md`` for every setting.
+See ``docs/index.md`` for every setting.
 """
 
 from __future__ import annotations
@@ -26,10 +26,10 @@ import urllib.parse
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
-from ai_usage_reporter.record import COST_TYPES
+from ai_usage_reporter.record import BILLING_ACCOUNT, COST_TYPES
 
 APP_DIR = "ai-usage-reporter"
 CONFIG_FILE = "config.toml"
@@ -99,23 +99,72 @@ def state_dir(env: Mapping[str, str] | None = None, home: Path | None = None) ->
 
 @dataclass(frozen=True, slots=True)
 class CostRule:
-    """``[[cost_rules]]``: the first rule whose filters all match sets the cost hints."""
+    """``[[cost_rules]]``: the first rule whose filters all match sets the cost hints.
+
+    Filters (all optional; a rule without filters matches everything):
+
+    - ``tool``: glob, case-sensitive (tool slugs are lowercase).
+    - ``model``, ``repo``, ``route``: glob, case-insensitive. ``repo`` is
+      ``host/owner/repo``; ``route`` is the backend the tool says the requests
+      went through (Codex ``model_provider``, OpenCode ``providerID``, the
+      Claude Code base URL host). A record without a repo or route never
+      matches a rule that names one.
+    - ``cwd``: glob on the working folder, ``~`` expanded when the config is
+      loaded. It matches the folder itself or any folder above it, so a plain
+      path matches everything under it, like ``exclude_paths``. Case follows
+      the platform (``os.path.normcase``: insensitive on Windows only). A bucket
+      that ran in several folders is matched by the one most of its requests
+      ran in, the same folder its repository is taken from.
+
+    Outputs: ``cost_type``, ``subscription_hint`` and ``billing_account`` (a
+    Specivo billing account slug, resolved by the server against the person's
+    own and the instance's accounts).
+    """
 
     cost_type: str | None = None
     subscription_hint: str | None = None
+    billing_account: str | None = None
     tool: str | None = None
     model: str | None = None
     repo: str | None = None
+    route: str | None = None
+    cwd: str | None = None
 
-    def matches(self, tool: str, model: str, repo: str | None) -> bool:
+    def matches(
+        self,
+        tool: str,
+        model: str,
+        repo: str | None,
+        *,
+        route: str | None = None,
+        cwd: str | None = None,
+    ) -> bool:
         if self.tool is not None and not fnmatchcase(tool, self.tool):
             return False
         if self.model is not None and not fnmatchcase(model.lower(), self.model.lower()):
             return False
         if self.repo is not None and (repo is None or not fnmatchcase(repo.lower(), self.repo.lower())):
             return False
+        if self.route is not None and (route is None or not fnmatchcase(route.lower(), self.route.lower())):
+            return False
+        if self.cwd is not None and (cwd is None or not cwd_matches(cwd, self.cwd)):
+            return False
         return True
 
+
+def cwd_matches(cwd: str, pattern: str) -> bool:
+    """Whether the folder *cwd*, or a folder above it, matches the glob *pattern*."""
+    folder = PurePath(os.path.normcase(cwd))
+    wanted = os.path.normcase(pattern)
+    if len(wanted) > 1:
+        wanted = wanted.rstrip("/\\")
+    return any(fnmatchcase(str(candidate), wanted) for candidate in (folder, *folder.parents))
+
+
+#: The keys of a ``[[cost_rules]]`` entry: its outputs, then its filters.
+COST_RULE_KEYS = frozenset(
+    {"cost_type", "subscription_hint", "billing_account", "tool", "model", "repo", "route", "cwd"}
+)
 
 #: Where a tool's usage comes from: its own logs (``native``) or ``ai-usage import ccusage``.
 SOURCE_VIAS = ("native", "ccusage")
@@ -159,9 +208,17 @@ class Config:
     def source(self, name: str) -> SourceSettings:
         return self.sources.get(name, SourceSettings())
 
-    def cost_for(self, tool: str, model: str, repo: str | None) -> CostRule | None:
+    def cost_for(
+        self,
+        tool: str,
+        model: str,
+        repo: str | None,
+        *,
+        route: str | None = None,
+        cwd: str | None = None,
+    ) -> CostRule | None:
         for rule in self.cost_rules:
-            if rule.matches(tool, model, repo):
+            if rule.matches(tool, model, repo, route=route, cwd=cwd):
                 return rule
         return None
 
@@ -240,20 +297,30 @@ def parse_config(data: Mapping[str, Any], path: Path | None = None) -> Config:
     for number, rule in enumerate(raw_rules, start=1):
         if not isinstance(rule, dict):
             raise ConfigError(f"cost_rules #{number} must be a table")
-        extra = set(rule) - {"cost_type", "subscription_hint", "tool", "model", "repo"}
+        extra = set(rule) - COST_RULE_KEYS
         if extra:
             raise ConfigError(f"cost_rules #{number}: unknown key(s) {', '.join(sorted(extra))}")
         where = f"cost_rules #{number}: "
         cost_type = _opt_str(rule, "cost_type", where)
         if cost_type is not None and cost_type not in COST_TYPES:
             raise ConfigError(f"{where}cost_type must be one of {', '.join(COST_TYPES)}")
+        billing_account = _opt_str(rule, "billing_account", where)
+        if billing_account is not None and not BILLING_ACCOUNT.match(billing_account):
+            raise ConfigError(
+                f"{where}billing_account {billing_account!r} is not a billing account slug: 1 to 64 characters,"
+                " lowercase letters, digits, '.', '_' or '-', starting with a letter or digit"
+            )
+        cwd = _opt_str(rule, "cwd", where)
         rules.append(
             CostRule(
                 cost_type=cost_type,
                 subscription_hint=_opt_str(rule, "subscription_hint", where),
+                billing_account=billing_account,
                 tool=_opt_str(rule, "tool", where),
                 model=_opt_str(rule, "model", where),
                 repo=_opt_str(rule, "repo", where),
+                route=_opt_str(rule, "route", where),
+                cwd=str(Path(cwd).expanduser()) if cwd is not None else None,
             )
         )
     projects = data.get("projects", {})
@@ -297,7 +364,7 @@ def load_config(path: Path) -> Config:
 
 
 CONFIG_TEMPLATE = """\
-# ai-usage-reporter configuration. See docs/configuration.md.
+# ai-usage-reporter configuration. See docs/index.md.
 
 # Your Specivo server. The API key is not stored here: it lives in the OS
 # keychain, in the SPECIVO_API_KEY environment variable or in the api-key file
@@ -344,7 +411,17 @@ exclude_paths = []
 # [sources.gemini-cli]
 # via = "ccusage"
 
-# How usage is paid. The first matching rule wins; leave out to let Specivo decide.
+# How usage is paid and who pays. The first matching rule wins; leave out to let
+# Specivo decide. Filters (all optional, patterns allowed): tool, model, repo,
+# route (the backend: Codex model_provider, OpenCode providerID, Claude Code
+# base URL host) and cwd (a working folder, matching everything under it).
+# Outputs: cost_type, subscription_hint and billing_account (a Specivo billing
+# account slug). A tool-wide rule also catches gateway usage: scope it by route.
+# [[cost_rules]]
+# tool = "codex"
+# route = "corp-*"
+# billing_account = "corp-gateway"
+#
 # [[cost_rules]]
 # tool = "claude-code"
 # cost_type = "subscription"

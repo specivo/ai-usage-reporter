@@ -195,6 +195,7 @@ def import_report(
             tokens=tokens,
             cost_type=rule.cost_type if rule else None,
             subscription_hint=rule.subscription_hint if rule else None,
+            billing_account=rule.billing_account if rule else None,
             on_behalf_of=config.on_behalf_of,
         )
         try:

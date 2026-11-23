@@ -162,15 +162,15 @@ that runs past midnight UTC, or switches models, becomes several records. Each r
   with its own Specivo tool calls (see below), the git branch, the repository as
   `host/owner/repo` (never a path, never credentials), SHAs of commits you made during the session,
   and a project key from your repository mapping;
-- cost hints from your config (`cost_type`, `subscription_hint`) and `on_behalf_of` for service
-  accounts.
+- cost hints from your config (`cost_type`, `subscription_hint`, `billing_account`) and
+  `on_behalf_of` for service accounts.
 - when a source knows them, the `route` (the backend the requests went through, such as a gateway
   host; for Codex the session's `model_provider`, while `provider` stays `openai` for OpenAI's
   models; for OpenCode its `providerID`, while `provider` is sent only for a known model maker so
   gateway and bundle usage is priced by model name; for Claude Code the host of
   `ANTHROPIC_BASE_URL`, recorded by the `SessionStart` hook or read from the `env` of its
   settings files, else `claude.ai:org-<hash>` for a claude.ai login, never the organization id)
-  and the `billing_account` that paid; both go only to a server that lists them in its
+  and the `billing_account` that paid (set by a `[[cost_rules]]` entry); both go only to a server that lists them in its
   `optional_fields` (Specivo 0.15.0 or later), older servers get the record without them.
 - when a source knows them, the session's place in the agent's work: its parent session (as an
   opaque id like the session id), whether it was an unattended run (cron, scheduled) and the agent
@@ -220,6 +220,16 @@ timezone = "Asia/Bangkok"          # for dates shown by "status"; buckets are al
 git_commits = true
 exclude_paths = ["~/private"]
 
+# The first matching rule wins. Filters (patterns): tool, model, repo, route, cwd.
+[[cost_rules]]
+tool = "codex"
+route = "corp-*"                     # Codex through the company gateway
+billing_account = "corp-gateway"     # a Specivo billing account slug
+
+[[cost_rules]]
+cwd = "~/work/client-a"              # this folder and everything under it
+billing_account = "client-a"
+
 [[cost_rules]]
 tool = "claude-code"
 cost_type = "subscription"
@@ -238,6 +248,11 @@ roots = ["/opt/data"]                # a Hermes home mounted from Docker; the de
 [sources.gemini-cli]
 via = "ccusage"                      # count Gemini CLI through "ai-usage import ccusage" instead
 ```
+
+A tool-wide rule (`tool = "codex"` → `subscription`, `tool = "opencode"` → `api`) also catches
+usage that went through a corporate gateway and misreports it as your own spend. Scope such rules
+by `route`, or put the gateway rule first. Matching rules are described in
+[docs/index.md](docs/index.md#costs).
 
 ## Writing an adapter
 
