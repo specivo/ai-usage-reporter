@@ -391,10 +391,21 @@ viewer's own time zone; the `timezone` setting only changes how `ai-usage status
 
 ## Costs
 
-The reporter sends tokens; Specivo computes the cost. Tell it how the usage is paid with
-`[[cost_rules]]` in the config (per tool, model or repository):
+The reporter sends tokens; Specivo computes the cost. Tell it how the usage is paid, and which
+billing account pays for it, with `[[cost_rules]]` in the config:
 
 ```toml
+# Codex through the company gateway: the company's account pays.
+[[cost_rules]]
+tool = "codex"
+route = "corp-*"
+billing_account = "corp-gateway"
+
+# Everything run in the client's folders is billed to the client's account.
+[[cost_rules]]
+cwd = "~/work/client-a"
+billing_account = "client-a"
+
 [[cost_rules]]
 tool = "claude-code"
 cost_type = "subscription"
@@ -404,6 +415,39 @@ subscription_hint = "claude-max-20x"
 repo = "github.com/acme/*"
 cost_type = "api"
 ```
+
+Rules are tried in order and the **first rule whose filters all match** sets the outputs; later
+rules are not consulted, so put narrow rules (a route, a folder) before tool-wide ones. A rule
+without filters matches everything.
+
+| Filter | Matched against | How |
+|---|---|---|
+| `tool` | the tool slug (`claude-code`, `codex`, `opencode`, `hermes`, ...) | glob, case-sensitive |
+| `model` | the model id | glob, case-insensitive |
+| `repo` | the repository as `host/owner/repo` | glob, case-insensitive; no match when the bucket has no repository |
+| `route` | the [route](#route-and-provider) (Codex `model_provider`, OpenCode `providerID`, Claude Code base URL host or `claude.ai:org-<hash>`, Hermes billing provider) | glob, case-insensitive; no match when the source sent no route |
+| `cwd` | the working folder of the session | glob on the folder **or any folder above it**, so a plain path such as `~/work/client-a` covers everything under it and `~/work/client-*` covers every client folder; `~` is expanded; case-sensitive except on Windows; no match when the source logged no folder |
+
+Globs are shell-style: `*` (any text, including `/`), `?` and `[abc]`.
+
+A bucket (one session, model and UTC day) can hold requests from more than one folder, for example
+when the agent changed directory. The `cwd` filter then sees the folder **most of its requests ran
+in** (ties go to the first in sort order), the same folder the repository hint comes from, so a
+bucket is billed to one account. The folder is only matched locally; it is never sent.
+
+| Output | Meaning |
+|---|---|
+| `cost_type` | `subscription`, `api`, `local`, `free` or `unknown`; wins over what the tool says |
+| `subscription_hint` | which of your subscriptions covers it |
+| `billing_account` | the slug of a Specivo billing account (`a-z`, `0-9`, `.`, `_`, `-`, up to 64 characters, starting with a letter or digit; checked when the config is loaded). Specivo looks it up among your own accounts and the instance's. Sent only to servers that list it in `optional_fields` |
+
+**Gateways and tool-wide rules.** A rule that names only a tool (`tool = "codex"` →
+`subscription`, `tool = "opencode"` → `api`) also catches the usage that went through a corporate
+gateway, which is then reported as your own subscription or API spend. Scope such rules by `route`,
+or put a gateway rule with its `billing_account` before them.
+
+Records imported from ccusage have no route and no folder, so rules with `route` or `cwd` never
+match them.
 
 Without a rule, Specivo uses `subscription` when you have an AI subscription covering the tool,
 and `unknown` otherwise.
@@ -483,7 +527,7 @@ your repositories in `[projects]` to get the precise reasons.
 | `agent_log_issues` | Split long sessions by the issues the agent marked with its Specivo tool calls and send them (default `true`); see [Long sessions on several issues](#long-sessions-on-several-issues) |
 | `exclude_paths` | Sessions that ran in these directories are never reported |
 | `[sources.<name>]` | `enabled = false` turns a source off; `roots = [...]` reads other directories; `via = "ccusage"` counts the tool through `import ccusage` instead of its logs; `project = "KEY"` is the tool's project when no `[projects]` repository pattern matches (for example sessions outside any git repository) |
-| `[[cost_rules]]` | `tool`, `model`, `repo` (patterns) → `cost_type`, `subscription_hint`; the first match wins |
+| `[[cost_rules]]` | `tool`, `model`, `repo`, `route`, `cwd` (patterns) → `cost_type`, `subscription_hint`, `billing_account`; the first match wins. See [Costs](#costs) |
 | `[projects]` | Repository pattern (`host/owner/repo`) → Specivo project key |
 | `[long_context]` | Model pattern → long-context threshold in tokens |
 

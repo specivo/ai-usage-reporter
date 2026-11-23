@@ -14,8 +14,9 @@ For each bucket:
 - ``commits``: SHAs of commits the local git user made in that repository
   during the bucket's time window (``git log``), when ``git_commits`` is on.
 - ``project_key``: from the ``[projects]`` repository mapping.
-- ``cost_type`` and ``subscription_hint``: from the first matching
-  ``[[cost_rules]]`` entry.
+- ``cost_type``, ``subscription_hint`` and ``billing_account``: from the
+  first matching ``[[cost_rules]]`` entry. Its ``cwd`` filter sees the
+  bucket's main working directory, the one the repository comes from.
 - ``reported_cost``: the sum of the costs the tool logged, when it logged one
   for every request of the bucket (OpenCode does).
 
@@ -202,7 +203,7 @@ class Enricher:
         )
         if self.drop_explicit(key):
             attribution = attribution.without_explicit()
-        rule = self.config.cost_for(bucket.tool, bucket.model, repo)
+        rule = self.config.cost_for(bucket.tool, bucket.model, repo, route=bucket.route, cwd=cwd)
         cost = bucket.reported_cost
         reported = Money(format_amount(cost[0]), cost[1]) if cost is not None else None
         return ContractRecord(
@@ -222,6 +223,7 @@ class Enricher:
             # A [[cost_rules]] entry is the person's word and wins over what the tool says.
             cost_type=rule.cost_type if rule and rule.cost_type else bucket.cost_type,
             subscription_hint=rule.subscription_hint if rule else None,
+            billing_account=rule.billing_account if rule else None,
             on_behalf_of=self.config.on_behalf_of,
             attribution=attribution,
             parent_session_id=bucket.parent_session,
