@@ -26,6 +26,14 @@ What the data looks like, and what this adapter does with it:
   the JSON files), ``tokens`` (``input``, ``output``, ``reasoning``,
   ``cache.read``, ``cache.write``), ``cost`` and ``time.created`` in epoch
   milliseconds. One message is one model request.
+- **Route and provider.** ``providerID`` names the backend OpenCode called: a
+  maker's own API (``anthropic``, ``openai``, ``zhipuai``), a gateway
+  (``openrouter``) or a bundle or custom provider (``opencode``,
+  ``github-copilot``, a company proxy). It is sent as ``route``. ``provider``
+  is the model's maker and only sent when the route says who it is: a known
+  maker's id, or through a gateway the model id's prefix
+  (``anthropic/claude-sonnet-4.5``). Otherwise it is left out and Specivo
+  prices by the model name (see :mod:`ai_usage_reporter.adapters._routes`).
 - **Token semantics.** OpenCode stores its tokens already split into
   disjoint classes: ``input`` excludes cache reads and writes, and ``output``
   excludes ``reasoning``. That is the contract's semantics, so the counts are
@@ -73,6 +81,7 @@ from typing import Any
 
 from ai_usage_reporter.adapters import DiscoveryContext, HookSpec
 from ai_usage_reporter.adapters._jsonl import get_dict, get_str
+from ai_usage_reporter.adapters._routes import maker_of
 from ai_usage_reporter.issue_marks import CREATE, created_issue, marking_call
 from ai_usage_reporter.model import SourceBusyError, SourceFile, TokenCounts, UsageEvent, count, parse_timestamp
 
@@ -188,7 +197,7 @@ def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
 class OpenCodeAdapter:
     name = "opencode"
     provider = "unknown"
-    parser_version = "opencode/2"
+    parser_version = "opencode/3"
 
     def __init__(self, sleep: Callable[[float], None] = time.sleep) -> None:
         self._sleep = sleep
@@ -330,7 +339,7 @@ class OpenCodeAdapter:
             src.stats.skipped_events += 1
             return None
         model = get_str(data, "model", "id") or get_str(data, "modelID")
-        provider = get_str(data, "model", "providerID") or get_str(data, "providerID")
+        route = get_str(data, "model", "providerID") or get_str(data, "providerID")
         top = root or root_of(session, sessions)
         info = sessions.get(session)
         cost = _cost(data.get("cost"))
@@ -342,7 +351,8 @@ class OpenCodeAdapter:
             model=model or "unknown",
             timestamp=when,
             tokens=tokens,
-            provider=provider,
+            provider=maker_of(route, model or ""),
+            route=route,
             tool_version=info.version if info else None,
             message_id=message_id,
             cwd=get_str(data, "path", "cwd") or (info.directory if info else None),
