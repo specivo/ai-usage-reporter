@@ -123,7 +123,7 @@ Only five properties are required. Everything else may be left out or set to `nu
 | `cost_type` | no | `subscription`, `api`, `local`, `free` or `unknown`. See [Costs](#costs). |
 | `subscription_hint` | no | The plan the tool reports, e.g. `claude-max-20x`. Informational; not stored by v1 servers. |
 | `route` | no | Raw id of the backend the requests went through (1 to 100 characters, no control characters), e.g. a gateway host. See [Optional fields](#optional-fields). |
-| `billing_account` | no | Slug of the billing account that paid (1 to 64 characters of `a-z`, `0-9` and `-`, starting with a letter or digit). See [Optional fields](#optional-fields). |
+| `billing_account` | no | Slug of the billing account that paid (1 to 64 characters of `a-z`, `0-9`, `_`, `.` and `-`, starting with a letter or digit). See [Optional fields](#optional-fields). |
 | `on_behalf_of` | no | Login of the person the usage belongs to. See [Reporting for someone else](#reporting-for-someone-else). |
 | `attribution` | no | Hints for the issue and project. See [Issue attribution](#issue-attribution). |
 

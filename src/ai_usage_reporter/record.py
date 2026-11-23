@@ -47,7 +47,7 @@ _PROJECT = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,127}$")
 _SHA = re.compile(r"^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$")
 _AMOUNT = re.compile(r"^(0|[1-9][0-9]{0,11})(\.[0-9]{1,8})?$")
 _CURRENCY = re.compile(r"^[A-Z]{3}$")
-_ACCOUNT = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+_ACCOUNT = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
 # A session id is sent as is only when it looks like an opaque token.
 _OPAQUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 # host/owner/repo: no scheme, no credentials, no local path.
