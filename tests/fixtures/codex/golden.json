@@ -27,6 +27,7 @@
     "model": "gpt-5",
     "provider": "openai",
     "request_count": 1,
+    "route": "openai",
     "session_id": "22222222-2222-4222-8222-222222222222",
     "started_at": "2026-10-05T08:03:00Z",
     "tokens": {
@@ -49,6 +50,7 @@
     "model": "gpt-5-codex",
     "provider": "openai",
     "request_count": 2,
+    "route": "openai",
     "session_id": "22222222-2222-4222-8222-222222222222",
     "started_at": "2026-10-05T08:00:10Z",
     "tokens": {

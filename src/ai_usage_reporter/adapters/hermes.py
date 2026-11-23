@@ -72,7 +72,6 @@ Hermes holds a lock.
 
 from __future__ import annotations
 
-import ipaddress
 import json
 import sqlite3
 import time
@@ -81,9 +80,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from ai_usage_reporter.adapters import DiscoveryContext
+from ai_usage_reporter.adapters._routes import resolve_provider
 from ai_usage_reporter.adapters.opencode import _is_busy, _open_read_only
 from ai_usage_reporter.issue_marks import CREATE, created_issue, marking_call
 from ai_usage_reporter.model import (
@@ -122,70 +121,11 @@ UNATTENDED_SOURCES = frozenset({"cron"})
 SUBSCRIPTION_MODES = frozenset({"subscription_included"})
 #: ``cost_source`` values that mean the provider reported the charge (not a Hermes estimate).
 REPORTED_COST_SOURCES = frozenset({"provider_cost_api", "provider_generation_api"})
-#: Routes that serve many makers' models: the provider is the model id's prefix.
-GATEWAYS = frozenset({"openrouter", "litellm"})
-#: Route names that say nothing about the maker.
-NO_PROVIDER = frozenset({"", "custom", "unknown"})
-LOCAL_ENGINES = frozenset(
-    {"local", "ollama", "lmstudio", "lm-studio", "llamacpp", "llama.cpp", "llama-cpp", "vllm", "mlx"}
-)
-#: Hermes provider ids whose maker has another name on the server.
-PROVIDER_ALIASES = {
-    "openai-codex": "openai",
-    "openai-api": "openai",
-    "nousresearch": "nous",
-    "nous-portal": "nous",
-    "google": "gemini",
-    "google-gemini": "gemini",
-    "google-ai-studio": "gemini",
-    "google-vertex": "gemini",
-    "vertex": "gemini",
-    "vertex-ai": "gemini",
-    "vertex_ai": "gemini",
-    "vertexai": "gemini",
-}
 #: Parent links are followed at most this deep (and never round a cycle).
 MAX_DEPTH = 64
 #: Tool-call ids looked up per query for specivo_create_issue results.
 _CHUNK = 500
 _CENT = Decimal("0.00000001")
-
-
-# -- provider, route and cost type -----------------------------------------------------
-
-
-def _local_url(base_url: str | None) -> bool:
-    """Whether *base_url* points at this machine or a private network."""
-    if not base_url:
-        return False
-    try:
-        host = (urlsplit(base_url if "//" in base_url else f"//{base_url}").hostname or "").lower()
-    except ValueError:
-        return False
-    if not host:
-        return False
-    if host == "localhost" or host.endswith((".localhost", ".local")) or host == "host.docker.internal":
-        return True
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    return address.is_loopback or address.is_private or address.is_link_local
-
-
-def _alias(name: str) -> str:
-    return PROVIDER_ALIASES.get(name, name)
-
-
-def resolve_provider(billing_provider: str | None, base_url: str | None, model: str) -> tuple[str | None, str | None]:
-    """The model's maker and the cost type a Hermes route implies (``None``: let the server decide)."""
-    raw = (billing_provider or "").strip().lower()
-    if raw in LOCAL_ENGINES or _local_url(base_url):
-        return "local", "local"
-    if raw in GATEWAYS or raw in NO_PROVIDER:
-        prefix = model.split("/", 1)[0].strip().lower() if "/" in model else ""
-        return (_alias(prefix) if prefix else None), None
-    return _alias(raw), None
 
 
 # -- discovery ---------------------------------------------------------------------------

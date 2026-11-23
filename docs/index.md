@@ -288,6 +288,20 @@ A Specivo server older than this feature refuses `agent_log`. The reporter then 
 records again without the issue, so the totals stay right, and leaves the issue out for the next
 seven days before trying again.
 
+## Route and provider
+
+`route` names the backend the requests went through, as the tool names it: the ChatGPT login, a
+company gateway, a provider profile. Specivo uses it to tell who pays (see billing accounts in
+Specivo 0.15.0 and later); it never changes the price. `provider` stays the model's maker, which
+Specivo prices by. Both are sent only to servers that list `route` in `optional_fields`.
+
+| Tool | `route` | `provider` |
+|---|---|---|
+| Codex | `model_provider` of the session (`openai`, or the id of a `[model_providers.<id>]` profile in `config.toml`) | `openai` for OpenAI's models (`gpt-*`, `o*`, `codex-*`) whatever the profile; a local engine (`ollama`, `lmstudio`) gives `local` and `cost_type = local`; other models the maker the profile or the model id names, else none (Specivo prices by model name) |
+| Hermes | the billing provider (see [Hermes Agent](#hermes-agent)) | the model's maker |
+
+Codex rollouts written before Codex logged `model_provider` have no route and keep `openai`.
+
 ## Hermes Agent
 
 The `hermes` source reads Hermes Agent's `state.db`: the default profile's in the Hermes home and

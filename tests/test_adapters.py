@@ -14,7 +14,10 @@ import pytest
 from ai_usage_reporter.adapters import DiscoveryContext, adapter_hook, load_adapters
 from ai_usage_reporter.adapters.claude_code import ClaudeCodeAdapter, session_from_path
 from ai_usage_reporter.adapters.codex import CodexAdapter
+from ai_usage_reporter.aggregate import aggregate
+from ai_usage_reporter.config import Config
 from ai_usage_reporter.dedup import deduplicate
+from ai_usage_reporter.enrich import Enricher
 from ai_usage_reporter.model import UsageEvent
 
 
@@ -65,11 +68,16 @@ def test_claude_hook_metadata() -> None:
     assert hook is not None and "SessionEnd" in hook.events
 
 
-def _codex_session(home: Path, folder: str, session: str, model: str, total: int) -> Path:
+def _codex_session(
+    home: Path, folder: str, session: str, model: str, total: int, *, model_provider: str | None = None
+) -> Path:
     path = home / ".codex" / folder / f"rollout-2026-10-05T08-00-00-{session}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
+    meta: dict[str, Any] = {"id": session}
+    if model_provider is not None:
+        meta["model_provider"] = model_provider
     lines = [
-        {"timestamp": "2026-10-05T08:00:00Z", "type": "session_meta", "payload": {"id": session}},
+        {"timestamp": "2026-10-05T08:00:00Z", "type": "session_meta", "payload": meta},
         {"timestamp": "2026-10-05T08:00:01Z", "type": "turn_context", "payload": {"model": model}},
         {
             "timestamp": "2026-10-05T08:00:02Z",
@@ -117,6 +125,41 @@ def test_codex_without_model_metadata(tmp_path: Path) -> None:
     path.write_text(json.dumps(line) + "\n", encoding="utf-8")
     [event] = _events(CodexAdapter(), DiscoveryContext(home=tmp_path, env={}))
     assert (event.model, event.session_id, event.tokens.input, event.tokens.output) == ("unknown", SESSION, 5, 1)
+
+
+@pytest.mark.parametrize(
+    ("model_provider", "model", "expected"),
+    [
+        # The ChatGPT login or an OpenAI key.
+        ("openai", "gpt-5-codex", ("openai", "openai", None)),
+        # A custom provider profile, such as a company gateway: OpenAI's models stay priced as openai.
+        ("corp-gateway", "gpt-5", ("corp-gateway", "openai", None)),
+        ("corp-gateway", "o3", ("corp-gateway", "openai", None)),
+        # Another maker's model through a profile that does not name the maker: priced by model name.
+        ("corp-gateway", "claude-sonnet-4.5", ("corp-gateway", None, None)),
+        # Through a gateway, the model id names the maker.
+        ("openrouter", "anthropic/claude-sonnet-4.5", ("openrouter", "anthropic", None)),
+        # A known maker's own endpoint.
+        ("deepseek", "deepseek-chat", ("deepseek", "deepseek", None)),
+        # A local engine (codex --oss).
+        ("ollama", "gpt-oss:20b", ("ollama", "local", "local")),
+        # Rollouts from releases without model_provider.
+        (None, "gpt-5-codex", (None, "openai", None)),
+    ],
+)
+def test_codex_model_provider_is_the_route(
+    tmp_path: Path, model_provider: str | None, model: str, expected: tuple[str | None, str | None, str | None]
+) -> None:
+    _codex_session(tmp_path, "sessions", SESSION, model, 10, model_provider=model_provider)
+    [event] = _events(CodexAdapter(), DiscoveryContext(home=tmp_path, env={}))
+    assert (event.route, event.provider, event.cost_type) == expected
+
+
+def test_codex_route_reaches_the_record(tmp_path: Path) -> None:
+    _codex_session(tmp_path, "sessions", SESSION, "gpt-5", 10, model_provider="corp-gateway")
+    [bucket] = aggregate(_events(CodexAdapter(), DiscoveryContext(home=tmp_path, env={})), lambda model: None)
+    wire = Enricher(config=Config()).record(bucket).to_wire()
+    assert (wire["route"], wire["provider"]) == ("corp-gateway", "openai")
 
 
 class PluginAdapter:

@@ -165,7 +165,8 @@ that runs past midnight UTC, or switches models, becomes several records. Each r
 - cost hints from your config (`cost_type`, `subscription_hint`) and `on_behalf_of` for service
   accounts.
 - when a source knows them, the `route` (the backend the requests went through, such as a gateway
-  host) and the `billing_account` that paid; both go only to a server that lists them in its
+  host; for Codex the session's `model_provider`, while `provider` stays `openai` for OpenAI's
+  models) and the `billing_account` that paid; both go only to a server that lists them in its
   `optional_fields` (Specivo 0.15.0 or later), older servers get the record without them.
 - when a source knows them, the session's place in the agent's work: its parent session (as an
   opaque id like the session id), whether it was an unattended run (cron, scheduled) and the agent

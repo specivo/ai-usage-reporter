@@ -12,7 +12,8 @@ from typing import Any
 import pytest
 
 from ai_usage_reporter.adapters import DiscoveryContext, Registry
-from ai_usage_reporter.adapters.hermes import TESTED_SCHEMA_VERSION, HermesAdapter, resolve_provider
+from ai_usage_reporter.adapters._routes import resolve_provider
+from ai_usage_reporter.adapters.hermes import TESTED_SCHEMA_VERSION, HermesAdapter
 from ai_usage_reporter.adapters.opencode import OpenCodeAdapter
 from ai_usage_reporter.config import Config, CostRule
 from ai_usage_reporter.model import SourceBusyError, UsageEvent
