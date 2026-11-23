@@ -125,6 +125,10 @@ def _print_collection(collected: Collected, out: TextIO) -> None:
             f" {report.after_dedup} requests after dedup, {report.malformed_lines} malformed lines{busy}",
             file=out,
         )
+        for message in report.schema_errors:
+            print(f"  skipped: {message}", file=out)
+        for note in report.notes:
+            print(f"  note: {note}", file=out)
     print(f"{len(collected.records)} records", file=out)
     if collected.too_old:
         print(f"{collected.too_old} buckets older than the server keeps were left out", file=out)
@@ -230,7 +234,11 @@ def cmd_push(args: argparse.Namespace) -> int:
             if existing is not None:
                 existing.close()
         git = _git(args, config)
-        collected = collect(config, load_adapters(), selection=selection, git=git, session_issues=hints)
+        # On a copy of the state: what a push would send now, with nothing written.
+        with State.scratch_copy(state_path) as scratch:
+            collected = collect(
+                config, load_adapters(), selection=selection, state=scratch, git=git, session_issues=hints
+            )
         sink = _make_sink(args, config, cfg_path)
         sink.send([r.to_wire() for r in collected.records])
         _print_collection(collected, sys.stderr)
@@ -253,7 +261,15 @@ def cmd_push(args: argparse.Namespace) -> int:
             state.finish_run(run, {"error": str(exc)})
             state.commit()
             raise CliError(str(exc)) from None
-        state.finish_run(run, {**summary.as_dict(), "too_old": collected.too_old, "invalid": collected.invalid})
+        sources = {
+            name: {"schema_errors": report.schema_errors, "notes": report.notes}
+            for name, report in collected.reports.items()
+            if report.schema_errors or report.notes
+        }
+        state.finish_run(
+            run,
+            {**summary.as_dict(), "too_old": collected.too_old, "invalid": collected.invalid, "sources": sources},
+        )
         state.commit()
     _print_collection(collected, sys.stderr)
     statuses = ", ".join(f"{k} {v}" for k, v in sorted(summary.statuses.items())) or "nothing to send"
@@ -286,7 +302,8 @@ def cmd_show_payload(args: argparse.Namespace) -> int:
         if existing is not None:
             existing.close()
     git = _git(args, config)
-    collected = collect(config, load_adapters(), selection=selection, git=git, session_issues=hints)
+    with State.scratch_copy(state_path) as scratch:
+        collected = collect(config, load_adapters(), selection=selection, state=scratch, git=git, session_issues=hints)
     wires = [r.to_wire() for r in collected.records]
     batches = [wires[i : i + 500] for i in range(0, len(wires), 500)] or [[]]
     for batch in batches:
@@ -388,6 +405,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print(f"  {report.events} requests, {report.after_dedup} after dedup, {report.excluded} excluded")
         if report.busy_files:
             print(f"  {report.busy_files} files locked by the tool right now; they are read on the next run")
+        for message in report.schema_errors:
+            print(f"  cannot read: {message}")
+            problems += 1
+        for note in report.notes:
+            print(f"  note: {note}")
     imported = sorted(n for n, s in config.sources.items() if s.via == "ccusage")
     if imported:
         print(f"read through 'ai-usage import ccusage' instead of their logs: {', '.join(imported)}")

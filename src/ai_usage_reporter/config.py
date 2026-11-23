@@ -336,6 +336,9 @@ exclude_paths = []
 # roots = ["~/.local/share/opencode"]
 # project = "ACME"   # its project when no [projects] repository pattern matches
 
+# [sources.hermes]
+# roots = ["~/.hermes"]   # Hermes homes; each profile in profiles/<name> is read too
+
 # A tool read through "ai-usage import ccusage" instead of its own logs.
 # The two are exclusive, so the tool is never counted twice.
 # [sources.gemini-cli]

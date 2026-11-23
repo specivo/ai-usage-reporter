@@ -1,0 +1,134 @@
+[
+  {
+    "cost_type": "subscription",
+    "ended_at": "2026-11-05T02:04:30Z",
+    "idempotency_key": "f75487ea63c4fd0f8d099bb8b970adb8a9fd58ae3a9402793a5c32d84334fcc9",
+    "model": "gpt-5.1",
+    "profile": "default",
+    "provider": "openai",
+    "request_count": 4,
+    "route": "openai-codex",
+    "session_id": "20261105_020000_c7c8c9",
+    "started_at": "2026-11-05T02:00:00Z",
+    "tokens": {
+      "cache_read": 18000,
+      "input": 2500,
+      "output": 800,
+      "reasoning": 100
+    },
+    "tool": "hermes",
+    "unattended": true,
+    "usage_date": "2026-11-05"
+  },
+  {
+    "attribution": {
+      "git_branch": "main",
+      "issue_ref": "ACME-13",
+      "issue_ref_source": "agent_log"
+    },
+    "ended_at": "2026-11-05T09:35:00Z",
+    "idempotency_key": "14b3df6981ff034e2ec5c5988058f631868330f5c03d2dddcf30f0f2d5163fad",
+    "model": "anthropic/claude-sonnet-4.6",
+    "profile": "default",
+    "provider": "anthropic",
+    "reported_cost": {
+      "amount": "0.0421",
+      "currency": "USD"
+    },
+    "request_count": 2,
+    "route": "openrouter",
+    "session_id": "20261105_090000_a1b2c3",
+    "started_at": "2026-11-05T09:30:00Z",
+    "tokens": {
+      "input": 900,
+      "output": 400
+    },
+    "tool": "hermes",
+    "usage_date": "2026-11-05"
+  },
+  {
+    "attribution": {
+      "git_branch": "main",
+      "issue_ref": "ACME-12",
+      "issue_ref_source": "agent_log"
+    },
+    "ended_at": "2026-11-05T09:00:05Z",
+    "idempotency_key": "f39187ac30b59a3f6217ea1b867cb5ade4cb58dd80f6f44395978df9925cbe23",
+    "model": "claude-haiku-4-5",
+    "profile": "default",
+    "provider": "anthropic",
+    "request_count": 1,
+    "route": "anthropic",
+    "session_id": "20261105_090000_a1b2c3",
+    "started_at": "2026-11-05T09:00:05Z",
+    "tokens": {
+      "input": 200,
+      "output": 20
+    },
+    "tool": "hermes",
+    "usage_date": "2026-11-05"
+  },
+  {
+    "attribution": {
+      "git_branch": "main",
+      "issue_ref": "ACME-12",
+      "issue_ref_source": "agent_log"
+    },
+    "ended_at": "2026-11-05T09:20:00Z",
+    "idempotency_key": "78697bab1a2ff856322c2a0737c3e2dc8ba4145a78e0406605624188fc08bd18",
+    "model": "claude-sonnet-4-5",
+    "profile": "default",
+    "provider": "anthropic",
+    "request_count": 9,
+    "route": "anthropic",
+    "session_id": "20261105_090000_a1b2c3",
+    "started_at": "2026-11-05T09:00:00Z",
+    "tokens": {
+      "cache_read": 25000,
+      "cache_write_5m": 4000,
+      "input": 3800,
+      "output": 1500,
+      "reasoning": 350
+    },
+    "tool": "hermes",
+    "usage_date": "2026-11-05"
+  },
+  {
+    "attribution": {
+      "git_branch": "main"
+    },
+    "cost_type": "local",
+    "ended_at": "2026-11-06T10:40:00Z",
+    "idempotency_key": "91205337d8fd0f00f7beb28694dfa2788e7aa86876a0342013c7cbe0cce76a48",
+    "model": "qwen3-coder:30b",
+    "profile": "default",
+    "provider": "local",
+    "request_count": 5,
+    "route": "custom",
+    "session_id": "20261106_100000_0a0b0c",
+    "started_at": "2026-11-06T10:00:00Z",
+    "tokens": {
+      "input": 7000,
+      "output": 1200
+    },
+    "tool": "hermes",
+    "usage_date": "2026-11-06"
+  },
+  {
+    "ended_at": "2026-11-07T08:06:00Z",
+    "idempotency_key": "66a4026dc60186a5844f9097aea0b4fc279f9ebdff6e3820260986bfa10c4a0d",
+    "model": "Hermes-4-405B",
+    "profile": "research",
+    "provider": "nous",
+    "request_count": 2,
+    "route": "nous",
+    "session_id": "20261107_080000_e1e2e3",
+    "started_at": "2026-11-07T08:00:00Z",
+    "tokens": {
+      "input": 1500,
+      "output": 600
+    },
+    "tool": "hermes",
+    "usage_date": "2026-11-07"
+  }
+]

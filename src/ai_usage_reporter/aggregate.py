@@ -59,6 +59,9 @@ class Bucket:
     parent_session: str | None = None
     unattended: bool = False
     profile: str | None = None
+    #: The backend the requests went through, and how the tool says they were paid (the latest value wins).
+    route: str | None = None
+    cost_type: str | None = None
 
     @property
     def reported_cost(self) -> tuple[Decimal, str] | None:
@@ -106,7 +109,9 @@ def aggregate(
                 segment_issue=issue,
             )
             buckets[key] = bucket
-        bucket.started_at = min(bucket.started_at, when)
+        # An event that sums several requests says when the first of them began (same UTC day).
+        start = event.span_start.astimezone(UTC) if event.span_start is not None else when
+        bucket.started_at = min(bucket.started_at, start if start.date() == when.date() and start <= when else when)
         bucket.ended_at = max(bucket.ended_at, when)
         bucket.request_count += max(0, event.requests)
         threshold = threshold_for(event.model)
@@ -121,6 +126,8 @@ def aggregate(
         bucket.repo_url = event.repo_url or bucket.repo_url
         bucket.parent_session = event.parent_session or bucket.parent_session
         bucket.profile = event.profile or bucket.profile
+        bucket.route = event.route or bucket.route
+        bucket.cost_type = event.cost_type or bucket.cost_type
         # One unattended request makes the run unattended (a session is one or the other).
         bucket.unattended = bucket.unattended or event.unattended
         if event.cwd:

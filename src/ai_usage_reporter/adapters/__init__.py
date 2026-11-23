@@ -103,9 +103,10 @@ def builtin_adapters() -> list[Adapter]:
     from ai_usage_reporter.adapters.claude_code import ClaudeCodeAdapter
     from ai_usage_reporter.adapters.codex import CodexAdapter
     from ai_usage_reporter.adapters.gemini_cli import GeminiCliAdapter
+    from ai_usage_reporter.adapters.hermes import HermesAdapter
     from ai_usage_reporter.adapters.opencode import OpenCodeAdapter
 
-    return [ClaudeCodeAdapter(), CodexAdapter(), GeminiCliAdapter(), OpenCodeAdapter()]
+    return [ClaudeCodeAdapter(), CodexAdapter(), GeminiCliAdapter(), OpenCodeAdapter(), HermesAdapter()]
 
 
 @dataclass(slots=True)

@@ -10,9 +10,10 @@ from pathlib import Path
 from ai_usage_reporter.adapters.claude_code import ClaudeCodeAdapter
 from ai_usage_reporter.adapters.codex import CodexAdapter
 from ai_usage_reporter.adapters.gemini_cli import GeminiCliAdapter
+from ai_usage_reporter.adapters.hermes import HermesAdapter
 from ai_usage_reporter.adapters.opencode import OpenCodeAdapter
 from ai_usage_reporter.testing import AdapterConformance
-from tests.fixtures import agent_log_home
+from tests.fixtures import agent_log_home, hermes_home
 from tests.fixtures.opencode_home import build
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -66,4 +67,19 @@ class TestClaudeCodeIssueSegmentsConformance(AdapterConformance):
     adapter = ClaudeCodeAdapter()
     fixture_home = _agent_log_home()
     golden = FIXTURES / "claude_code" / "golden-segments.json"
+    canaries = CANARIES
+
+
+def _hermes_home() -> Path:
+    """A Hermes home with two profiles, built once per test run (see tests/fixtures/hermes_home.py)."""
+    folder = Path(tempfile.mkdtemp(prefix="hermes-fixture-"))
+    atexit.register(shutil.rmtree, folder, True)
+    hermes_home.build(folder / "home")
+    return folder / "home"
+
+
+class TestHermesConformance(AdapterConformance):
+    adapter = HermesAdapter()
+    fixture_home = _hermes_home()
+    golden = FIXTURES / "hermes" / "golden.json"
     canaries = CANARIES

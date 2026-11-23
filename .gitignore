@@ -13,3 +13,5 @@ __pycache__/
 /out/
 .coverage
 .DS_Store
+# Hermes Agent clone of make hermes-schema-check
+.hermes-src/

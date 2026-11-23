@@ -14,6 +14,11 @@
 - ``runs``: a summary of each push, for ``status`` and ``doctor``.
 - ``meta``: the schema version, and whether the server refused
   ``issue_ref_source: "agent_log"`` lately (see :mod:`ai_usage_reporter.pipeline`).
+- ``hermes_counters`` and ``hermes_usage``: Hermes keeps only running totals
+  per session and model, so the reporter remembers the totals it last saw
+  (``hermes_counters``) and the growth it observed per UTC day
+  (``hermes_usage``). See :mod:`ai_usage_reporter.adapters.hermes`. Local only,
+  like ``files``.
 """
 
 from __future__ import annotations
@@ -29,7 +34,7 @@ from typing import Any
 
 from ai_usage_reporter.model import UsageEvent
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -68,6 +73,51 @@ CREATE TABLE IF NOT EXISTS session_hints (
     session_id TEXT PRIMARY KEY,
     issue_ref TEXT NOT NULL,
     captured_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS hermes_counters (
+    session_id TEXT NOT NULL,
+    model TEXT NOT NULL,
+    billing_provider TEXT NOT NULL,
+    billing_base_url TEXT NOT NULL,
+    billing_mode TEXT NOT NULL,
+    task TEXT NOT NULL,
+    db_path TEXT NOT NULL,
+    api_calls INTEGER NOT NULL,
+    input INTEGER NOT NULL,
+    output INTEGER NOT NULL,
+    cache_read INTEGER NOT NULL,
+    cache_write INTEGER NOT NULL,
+    reasoning INTEGER NOT NULL,
+    actual_cost_usd TEXT NOT NULL,
+    last_seen TEXT,
+    observed_at TEXT NOT NULL,
+    PRIMARY KEY (session_id, model, billing_provider, billing_base_url, billing_mode, task)
+);
+CREATE TABLE IF NOT EXISTS hermes_usage (
+    db_path TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    model TEXT NOT NULL,
+    billing_provider TEXT NOT NULL,
+    billing_base_url TEXT NOT NULL,
+    billing_mode TEXT NOT NULL,
+    task TEXT NOT NULL,
+    usage_date TEXT NOT NULL,
+    root_session TEXT NOT NULL,
+    profile TEXT,
+    unattended INTEGER NOT NULL DEFAULT 0,
+    cwd TEXT,
+    git_branch TEXT,
+    api_calls INTEGER NOT NULL DEFAULT 0,
+    input INTEGER NOT NULL DEFAULT 0,
+    output INTEGER NOT NULL DEFAULT 0,
+    cache_read INTEGER NOT NULL DEFAULT 0,
+    cache_write INTEGER NOT NULL DEFAULT 0,
+    reasoning INTEGER NOT NULL DEFAULT 0,
+    cost TEXT NOT NULL DEFAULT '0',
+    cost_complete INTEGER NOT NULL DEFAULT 1,
+    started_at TEXT NOT NULL,
+    ended_at TEXT NOT NULL,
+    PRIMARY KEY (db_path, session_id, model, billing_provider, billing_base_url, billing_mode, task, usage_date)
 );
 CREATE TABLE IF NOT EXISTS runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -151,13 +201,35 @@ class State:
         self.db.row_factory = sqlite3.Row
         self.db.executescript(_SCHEMA)
         row = self.db.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
-        if row is None:
-            self.db.execute("INSERT INTO meta (key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),))
+        if row is None or int(row["value"]) < SCHEMA_VERSION:
+            # Every change so far only added tables, which the script above creates.
+            self.db.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),)
+            )
         self.db.commit()
 
     @classmethod
     def in_memory(cls) -> State:
         return cls(":memory:")
+
+    @classmethod
+    def scratch_copy(cls, path: Path) -> State:
+        """An in-memory copy of the state database at *path* (empty when there is none).
+
+        A dry run works on it, so it computes exactly what a push would send
+        while the real state is never written.
+        """
+        state = cls.in_memory()
+        if path.exists():
+            source = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+            try:
+                source.backup(state.db)
+            finally:
+                source.close()
+            # A copy from an older reporter lacks the newer tables.
+            state.db.executescript(_SCHEMA)
+            state.db.commit()
+        return state
 
     def close(self) -> None:
         self.db.close()

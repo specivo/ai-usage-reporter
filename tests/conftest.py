@@ -93,7 +93,15 @@ def isolated_home(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.
         monkeypatch.setenv(name, str(home))
     for name in ("XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
         monkeypatch.setenv(name, str(home / name.lower()))
-    for name in ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "OPENCODE_DB", "SPECIVO_ISSUE", "APPDATA", "LOCALAPPDATA"):
+    for name in (
+        "CLAUDE_CONFIG_DIR",
+        "CODEX_HOME",
+        "OPENCODE_DB",
+        "HERMES_HOME",
+        "SPECIVO_ISSUE",
+        "APPDATA",
+        "LOCALAPPDATA",
+    ):
         monkeypatch.delenv(name, raising=False)
     return home
 
