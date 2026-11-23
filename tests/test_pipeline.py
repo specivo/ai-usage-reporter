@@ -47,6 +47,29 @@ def test_buckets_split_at_utc_midnight_and_by_model() -> None:
     assert buckets[0].started_at.isoformat() == "2026-10-05T23:30:00+00:00"
 
 
+def test_buckets_keep_the_sessions_parent_run_and_profile() -> None:
+    from dataclasses import replace
+
+    from ai_usage_reporter.enrich import Enricher
+
+    first = replace(
+        _event("2026-10-05T02:00:00+00:00", TokenCounts(input=1)),
+        parent_session="root-1",
+        unattended=True,
+        profile="research",
+    )
+    later = _event("2026-10-05T02:05:00+00:00", TokenCounts(input=2))
+    other = _event("2026-10-05T02:00:00+00:00", TokenCounts(input=4), session="s2")
+    cron, attended = aggregate([first, later, other], Thresholds())
+    assert (cron.parent_session, cron.unattended, cron.profile) == ("root-1", True, "research")
+    assert (attended.parent_session, attended.unattended, attended.profile) == (None, False, None)
+
+    record = Enricher(config=Config()).record(cron)
+    assert (record.parent_session_id, record.unattended, record.profile) == ("root-1", True, "research")
+    wire = record.to_wire()
+    assert (wire["parent_session_id"], wire["unattended"], wire["profile"]) == ("root-1", True, "research")
+
+
 def test_long_context_requests_go_to_their_own_bucket_whole() -> None:
     thresholds = Thresholds({"m-*": 1000})
     events = [

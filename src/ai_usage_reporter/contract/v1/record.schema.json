@@ -152,6 +152,30 @@
       "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}$",
       "description": "Slug of the billing account that paid for the usage (1 to 64 characters of a-z, 0-9 and '-'). Send it only to a server that lists 'billing_account' in optional_fields."
     },
+    "parent_session_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Opaque id of the session this one continues or was started from: a subagent's parent, a branch, a continuation after context compression. Stored as is; never parsed. Send it only to a server that lists 'parent_session_id' in optional_fields."
+    },
+    "unattended": {
+      "type": "boolean",
+      "default": false,
+      "description": "True for usage of a run with nobody in the loop: a cron job, a scheduled or triggered agent run. Omitted: false (attended). Send it only to a server that lists 'unattended' in optional_fields."
+    },
+    "profile": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+      "description": "Name of the agent profile or home the usage came from, e.g. 'research'. Stored as is. Send it only to a server that lists 'profile' in optional_fields."
+    },
     "on_behalf_of": {
       "type": [
         "string",

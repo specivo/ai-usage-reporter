@@ -134,6 +134,9 @@ that runs past midnight UTC, or switches models, becomes several records. Each r
 - when a source knows them, the `route` (the backend the requests went through, such as a gateway
   host) and the `billing_account` that paid; both go only to a server that lists them in its
   `optional_fields` (Specivo 0.15.0 or later), older servers get the record without them.
+- when a source knows them, the session's place in the agent's work: its parent session (as an
+  opaque id like the session id), whether it was an unattended run (cron, scheduled) and the agent
+  profile it came from. Like `route`, they go only to servers that list them in `optional_fields`.
 
 Subagent work (Claude Code's Task tool and sidechains, Gemini CLI subagents, OpenCode child
 sessions) is counted in its parent session, so a session's total includes what it fanned out.

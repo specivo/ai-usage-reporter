@@ -1,0 +1,30 @@
+{
+  "schema": "specivo.ai-usage.v1",
+  "client": {"name": "ai-usage-reporter"},
+  "records": [
+    {
+      "idempotency_key": "example-unattended-as-text",
+      "tool": "hermes",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 1},
+      "unattended": "yes"
+    },
+    {
+      "idempotency_key": "example-profile-too-long",
+      "tool": "hermes",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 1},
+      "profile": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp"
+    },
+    {
+      "idempotency_key": "example-parent-session-empty",
+      "tool": "hermes",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 1},
+      "parent_session_id": ""
+    }
+  ]
+}

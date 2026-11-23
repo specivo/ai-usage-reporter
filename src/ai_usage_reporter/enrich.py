@@ -223,4 +223,7 @@ class Enricher:
             subscription_hint=rule.subscription_hint if rule else None,
             on_behalf_of=self.config.on_behalf_of,
             attribution=attribution,
+            parent_session_id=bucket.parent_session,
+            unattended=bucket.unattended,
+            profile=bucket.profile,
         )

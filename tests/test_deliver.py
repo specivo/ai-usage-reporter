@@ -274,6 +274,18 @@ def test_optional_fields_are_sent_once_the_server_lists_them(server: FakeServer)
         assert deliver([record], _sink(server), state).sent == 0
 
 
+def test_session_context_is_sent_once_the_server_lists_it(server: FakeServer) -> None:
+    record = make_record(unattended=True, profile="research")
+    with State.in_memory() as state:
+        server.info["optional_fields"] = ["route", "billing_account"]
+        assert deliver([record], _sink(server), state).sent == 1
+        assert "unattended" not in server.posts[-1][0] and "profile" not in server.posts[-1][0]
+        server.info["optional_fields"] = ["route", "billing_account", "parent_session_id", "unattended", "profile"]
+        assert deliver([record], _sink(server), state).sent == 1
+        assert server.posts[-1][0]["unattended"] is True and server.posts[-1][0]["profile"] == "research"
+        assert deliver([record], _sink(server), state).sent == 0
+
+
 def test_json_sink_writes_the_optional_fields() -> None:
     import io
 

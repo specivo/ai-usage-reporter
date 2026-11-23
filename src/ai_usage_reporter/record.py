@@ -36,7 +36,7 @@ COST_TYPES = ("subscription", "api", "local", "free", "unknown")
 ISSUE_REF_SOURCES = ("explicit", "env", "agent_log")
 AGENT_LOG = "agent_log"
 #: Record properties added within v1: sent only to a server that lists them in ``optional_fields``.
-OPTIONAL_FIELDS = ("route", "billing_account")
+OPTIONAL_FIELDS = ("route", "billing_account", "parent_session_id", "unattended", "profile")
 MAX_COUNT = 10**12
 MAX_REQUESTS = 100_000_000
 
@@ -103,6 +103,12 @@ class ContractRecord:
     route: str | None = None
     #: Slug of the billing account in Specivo that paid for the usage.
     billing_account: str | None = None
+    #: The session this one continues or was started from (a subagent's parent); sent opaque like ``session_id``.
+    parent_session_id: str | None = None
+    #: A run with nobody in the loop (cron, scheduled). Sent only when true: leaving it out means false.
+    unattended: bool = False
+    #: The agent profile or home the usage came from, e.g. ``research``.
+    profile: str | None = None
 
     def to_wire(self) -> dict[str, Any]:
         return to_wire(self)
@@ -252,6 +258,9 @@ def to_wire(record: ContractRecord) -> dict[str, Any]:
         "billing_account": record.billing_account
         if record.billing_account and _ACCOUNT.match(record.billing_account)
         else None,
+        "parent_session_id": opaque_session_id(record.parent_session_id) if record.parent_session_id else None,
+        "unattended": True if record.unattended is True else None,
+        "profile": _text(record.profile, 100),
     }
     for name, value in optional.items():
         if value is not None:
