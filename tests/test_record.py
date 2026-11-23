@@ -11,9 +11,11 @@ import pytest
 
 from ai_usage_reporter.model import TokenCounts, UsageEvent
 from ai_usage_reporter.record import (
+    OPTIONAL_FIELDS,
     Attribution,
     ContractRecord,
     RecordError,
+    gate_optional_fields,
     idempotency_key,
     normalise_repo,
     opaque_session_id,
@@ -141,3 +143,38 @@ def test_long_context_and_base_tokens_are_bounded_together() -> None:
     assert ok_record.to_wire()["long_context_tokens"] == {"input": 10}
     with pytest.raises(RecordError):
         make_record(tokens=near, long_context_tokens=TokenCounts(input=11)).to_wire()
+
+
+def test_route_and_billing_account_go_on_the_wire_when_they_fit() -> None:
+    wire = make_record(route="llm-gateway.example.com", billing_account="acme-gateway").to_wire()
+    assert wire["route"] == "llm-gateway.example.com"
+    assert wire["billing_account"] == "acme-gateway"
+    validate_records([wire])
+    assert set(OPTIONAL_FIELDS) == {"route", "billing_account"}
+
+
+@pytest.mark.parametrize(
+    ("route", "account"),
+    [
+        ("r" * 101, "Acme-Gateway"),
+        ("", "a" * 65),
+        ("gateway\nhost", "-acme"),
+        (None, "acme gateway"),
+    ],
+)
+def test_route_and_billing_account_that_do_not_fit_are_left_out(route: str | None, account: str) -> None:
+    wire = make_record(route=route, billing_account=account).to_wire()
+    assert "route" not in wire and "billing_account" not in wire
+    validate_records([wire])
+
+
+def test_gate_optional_fields_keeps_only_what_the_server_accepts() -> None:
+    wire = make_record(route="openrouter", billing_account="acme-gateway").to_wire()
+    assert gate_optional_fields(wire, {"route", "billing_account"}) == wire
+    only_route = gate_optional_fields(wire, {"route"})
+    assert only_route["route"] == "openrouter" and "billing_account" not in only_route
+    bare = gate_optional_fields(wire, frozenset())
+    assert "route" not in bare and "billing_account" not in bare
+    assert wire["billing_account"] == "acme-gateway"  # the original is untouched
+    plain = make_record().to_wire()
+    assert gate_optional_fields(plain, frozenset()) is plain

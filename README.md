@@ -131,6 +131,9 @@ that runs past midnight UTC, or switches models, becomes several records. Each r
   and a project key from your repository mapping;
 - cost hints from your config (`cost_type`, `subscription_hint`) and `on_behalf_of` for service
   accounts.
+- when a source knows them, the `route` (the backend the requests went through, such as a gateway
+  host) and the `billing_account` that paid; both go only to a server that lists them in its
+  `optional_fields` (Specivo 0.15.0 or later), older servers get the record without them.
 
 Subagent work (Claude Code's Task tool and sidechains, Gemini CLI subagents, OpenCode child
 sessions) is counted in its parent session, so a session's total includes what it fanned out.

@@ -2,6 +2,8 @@
 
 - Asks the server once (``GET``) which versions and limits it has, and splits
   records into batches under ``max_records`` and ``max_bytes``.
+- Leaves out the record properties added within v1 that the server does not
+  list in ``optional_fields`` (see :func:`ai_usage_reporter.record.gate_optional_fields`).
 - Every record gets its own outcome from the response's ``results``.
 - ``429``: waits ``Retry-After`` seconds (up to a cap) and sends the batch again.
 - ``5xx`` and network errors: retried with backoff, then left ``pending`` for
@@ -30,6 +32,7 @@ from typing import Any
 
 from ai_usage_reporter import CONTRACT_VERSION, __version__
 from ai_usage_reporter.config import ConfigError, check_server_url
+from ai_usage_reporter.record import gate_optional_fields
 from ai_usage_reporter.sinks import PENDING, Outcome, make_batch
 
 DEFAULT_MAX_RECORDS = 500
@@ -144,6 +147,8 @@ class ServerInfo:
     tools: list[str]
     #: The issue_ref_source values the server knows, when it says (newer servers do); else ``None``.
     issue_ref_sources: list[str] | None = None
+    #: The record properties added within v1 that the server accepts; none when it does not say.
+    optional_fields: frozenset[str] = frozenset()
 
 
 class SpecivoSink:
@@ -214,6 +219,9 @@ class SpecivoSink:
             issue_ref_sources=[str(v) for v in data["issue_ref_sources"]]
             if isinstance(data.get("issue_ref_sources"), list)
             else None,
+            optional_fields=frozenset(str(v) for v in data["optional_fields"])
+            if isinstance(data.get("optional_fields"), list)
+            else frozenset(),
         )
         if CONTRACT_VERSION not in self._info.versions:
             raise SinkError(f"the server does not accept {CONTRACT_VERSION} (it accepts {self._info.versions})")
@@ -223,6 +231,10 @@ class SpecivoSink:
         """Whether the server knows this ``issue_ref_source``; ``None`` when it does not say."""
         known = self.info().issue_ref_sources
         return None if known is None else source in known
+
+    def accepted_optional_fields(self) -> frozenset[str]:
+        """The record properties added within v1 that the server lists in ``optional_fields``."""
+        return self.info().optional_fields
 
     def _batches(self, records: Sequence[dict[str, Any]]) -> list[list[dict[str, Any]]]:
         info = self.info()
@@ -245,7 +257,8 @@ class SpecivoSink:
         outcomes: list[Outcome] = []
         if not records:
             return outcomes
-        queue = self._batches(records)
+        accepted = self.accepted_optional_fields()
+        queue = self._batches([gate_optional_fields(r, accepted) for r in records])
         stop = False
         while queue:
             batch = queue.pop(0)

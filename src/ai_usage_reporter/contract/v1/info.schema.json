@@ -74,6 +74,13 @@
         "type": "string"
       },
       "description": "The values of attribution.issue_ref_source the server knows. Servers that leave it out know 'explicit' and 'env' only."
+    },
+    "optional_fields": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Record properties added within v1 that the server accepts, e.g. 'route' and 'billing_account'. A client sends such a property only to a server that lists it. Servers that leave it out accept none of them."
     }
   }
 }
