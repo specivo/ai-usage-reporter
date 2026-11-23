@@ -151,6 +151,12 @@ class UsageEvent:
     #: calls. A marker carries no tokens and no requests; see
     #: :mod:`ai_usage_reporter.segments`.
     issue_mark: str | None = None
+    #: Where in the agent's work the request ran, when the tool says so (constant
+    #: within a session): the session it continues or was started from, a run
+    #: with nobody in the loop (cron, scheduled), and the agent profile.
+    parent_session: str | None = None
+    unattended: bool = False
+    profile: str | None = None
 
     @property
     def is_marker(self) -> bool:

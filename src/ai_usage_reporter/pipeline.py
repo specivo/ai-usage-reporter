@@ -270,6 +270,10 @@ def superseded_records(records: Sequence[ContractRecord], state: State) -> list[
                 provider=payload.get("provider"),
                 session_id=row.session_id,
                 on_behalf_of=payload.get("on_behalf_of"),
+                # The session's context stays as it was sent, so zeroing changes only the totals.
+                parent_session_id=payload.get("parent_session_id"),
+                unattended=payload.get("unattended") is True,
+                profile=payload.get("profile"),
             )
         )
     return out

@@ -72,7 +72,7 @@ works (the web app's cookie), but reporters should use a key.
   "tools": ["claude-code", "codex", "gemini-cli"],
   "currencies": ["EUR", "THB", "USD"],
   "issue_ref_sources": ["explicit", "env", "agent_log"],
-  "optional_fields": ["route", "billing_account"]
+  "optional_fields": ["route", "billing_account", "parent_session_id", "unattended", "profile"]
 }
 ```
 
@@ -124,6 +124,9 @@ Only five properties are required. Everything else may be left out or set to `nu
 | `subscription_hint` | no | The plan the tool reports, e.g. `claude-max-20x`. Informational; not stored by v1 servers. |
 | `route` | no | Raw id of the backend the requests went through (1 to 100 characters, no control characters), e.g. a gateway host. See [Optional fields](#optional-fields). |
 | `billing_account` | no | Slug of the billing account that paid (1 to 64 characters of `a-z`, `0-9`, `_`, `.` and `-`, starting with a letter or digit). See [Optional fields](#optional-fields). |
+| `parent_session_id` | no | Opaque id of the session this one continues or was started from (1 to 200 characters): a subagent's parent, a branch, a continuation after context compression. See [Optional fields](#optional-fields). |
+| `unattended` | no | `true` for a run with nobody in the loop (a cron job, a scheduled agent run). Default `false`. See [Optional fields](#optional-fields). |
+| `profile` | no | The agent profile or home the usage came from, e.g. `research` (1 to 100 characters, no control characters). See [Optional fields](#optional-fields). |
 | `on_behalf_of` | no | Login of the person the usage belongs to. See [Reporting for someone else](#reporting-for-someone-else). |
 | `attribution` | no | Hints for the issue and project. See [Issue attribution](#issue-attribution). |
 
@@ -152,9 +155,14 @@ lost without an error.
 |---|---|
 | `route` | The backend the requests went through, as the tool names it: a gateway host, a Codex `model_provider`, an OpenCode provider id. It is the raw id, stored as is; `provider` stays the model's maker and pricing never uses the route. |
 | `billing_account` | The billing account that paid for the usage, by its slug in Specivo, when the reporter's configuration names one. |
+| `parent_session_id` | The session this one belongs under: a subagent's parent, a branch, a continuation after context compression. Sent by clients that report each session on its own; a reporter that rolls child sessions up into their root does not send it. Stored as is, never parsed. |
+| `unattended` | Usage of a run with nobody in the loop: a cron job, a scheduled or triggered agent run. A session is either attended or not. Spend reports split attended from unattended usage. |
+| `profile` | The agent profile or home the usage came from, e.g. `research`, for agents that run several profiles with their own configuration. Stored as is; spend reports group and filter by it. |
 
-Both are optional and may be `null`. A value that breaks its format rejects the record with
-`invalid_record` and `field` naming the property.
+All are optional; `unattended` is a boolean and may be left out (it means `false`), the others
+may be `null`. A value that breaks its format rejects the record with `invalid_record` and
+`field` naming the property. Resending a record with only a different `parent_session_id`,
+`unattended` or `profile` updates the entry (`updated`, a new `revision`).
 
 **How the server uses them.** Specivo decides which billing account paid for each record, and
 from it who pays (`payer`: `employer`, `employee` or `unknown`), the first match winning:
@@ -323,7 +331,10 @@ Details of each step:
 2. Agent sessions are opened when an agent uses Specivo's MCP server; the session records the
    issue the agent is working on. The step needs at least one of `started_at` and `ended_at`
    (one alone is a window of one instant). When several sessions overlap, the one sharing the
-   longest part of the window wins.
+   longest part of the window wins. Before the time overlap, the server looks for a session
+   that carries the record's `session_id` as its own client session id, and then one that
+   carries `parent_session_id`: a subagent's usage goes to the issue its parent session works
+   on. Either match needs no time window.
 3. `commits` are full SHAs (40 or 64 hex digits) of commits made during the session. The issue
    most of them are linked to wins (links come from commit messages and branch names pushed
    to a connected repository). A tie goes to the older issue.
@@ -520,7 +531,9 @@ the record was rejected; an unknown warning code means it was stored.
   changes. Additions so far: the `issue_ref_source` value `agent_log` and the `GET` property
   `issue_ref_sources` that tells a reporter whether the server knows it; the record properties
   `route` and `billing_account` and the `GET` property `optional_fields` that lists them, with
-  the result properties `payer` and `billing_account` and the warning `billing_account_unknown`.
+  the result properties `payer` and `billing_account` and the warning `billing_account_unknown`;
+  the record properties `parent_session_id`, `unattended` and `profile`, listed in
+  `optional_fields` too.
 - **Clarifications** within v1 make explicit what the contract always meant and how Specivo
   has always processed it; they do not change the format. One so far: `tokens` and
   `long_context_tokens` are disjoint buckets whose sum is the usage (see

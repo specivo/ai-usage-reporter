@@ -111,6 +111,9 @@ def test_optional_fields_come_from_the_info_and_default_to_none(server: FakeServ
     assert _sink(server).accepted_optional_fields() == frozenset()
     server.info = {**INFO, "optional_fields": ["route", "billing_account", "later_field"]}
     assert _sink(server).accepted_optional_fields() == frozenset({"route", "billing_account", "later_field"})
+    names = ["route", "billing_account", "parent_session_id", "unattended", "profile"]
+    server.info = {**INFO, "optional_fields": names}
+    assert _sink(server).accepted_optional_fields() == frozenset(names)
     server.info = {**INFO, "optional_fields": "route"}
     assert _sink(server).accepted_optional_fields() == frozenset()
 

@@ -55,6 +55,10 @@ class Bucket:
     segment_issue: str | None = None
     #: Whether this bucket keeps the key of the whole session/model/day (see the module docs).
     primary_segment: bool = True
+    #: The session's parent, whether nobody attended it, and its agent profile (constant within a session).
+    parent_session: str | None = None
+    unattended: bool = False
+    profile: str | None = None
 
     @property
     def reported_cost(self) -> tuple[Decimal, str] | None:
@@ -115,6 +119,10 @@ def aggregate(
         bucket.tool_version = event.tool_version or bucket.tool_version
         bucket.git_branch = event.git_branch or bucket.git_branch
         bucket.repo_url = event.repo_url or bucket.repo_url
+        bucket.parent_session = event.parent_session or bucket.parent_session
+        bucket.profile = event.profile or bucket.profile
+        # One unattended request makes the run unattended (a session is one or the other).
+        bucket.unattended = bucket.unattended or event.unattended
         if event.cwd:
             bucket.cwds[event.cwd] += 1
         _add_cost(bucket, event)

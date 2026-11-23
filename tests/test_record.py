@@ -150,7 +150,7 @@ def test_route_and_billing_account_go_on_the_wire_when_they_fit() -> None:
     assert wire["route"] == "llm-gateway.example.com"
     assert wire["billing_account"] == "acme-gateway"
     validate_records([wire])
-    assert set(OPTIONAL_FIELDS) == {"route", "billing_account"}
+    assert set(OPTIONAL_FIELDS) == {"route", "billing_account", "parent_session_id", "unattended", "profile"}
 
 
 @pytest.mark.parametrize(
@@ -166,6 +166,35 @@ def test_route_and_billing_account_that_do_not_fit_are_left_out(route: str | Non
     wire = make_record(route=route, billing_account=account).to_wire()
     assert "route" not in wire and "billing_account" not in wire
     validate_records([wire])
+
+
+def test_session_context_goes_on_the_wire_when_it_fits() -> None:
+    wire = make_record(parent_session_id="20261105_090000_a1b2c3", unattended=True, profile="research").to_wire()
+    assert wire["parent_session_id"] == "20261105_090000_a1b2c3"
+    assert wire["unattended"] is True
+    assert wire["profile"] == "research"
+    validate_records([wire])
+    # An attended run without a parent or profile sends none of them: leaving them out means the same.
+    plain = make_record().to_wire()
+    assert not {"parent_session_id", "unattended", "profile"} & set(plain)
+
+
+def test_session_context_that_does_not_fit_is_left_out_or_made_opaque() -> None:
+    wire = make_record(parent_session_id="/home/someone/.hermes/sessions/a b", profile="p" * 101).to_wire()
+    # A parent id that is not an opaque token is hashed, as the session id is.
+    assert wire["parent_session_id"].startswith("h-") and "home" not in wire["parent_session_id"]
+    assert "profile" not in wire
+    assert "profile" not in make_record(profile="research\tlab").to_wire()
+    assert "profile" not in make_record(profile="").to_wire()
+    validate_records([wire])
+
+
+def test_gate_optional_fields_drops_session_context_for_older_servers() -> None:
+    wire = make_record(route="openrouter", unattended=True, profile="research", parent_session_id="p1").to_wire()
+    older = gate_optional_fields(wire, {"route", "billing_account"})
+    assert older["route"] == "openrouter"
+    assert not {"parent_session_id", "unattended", "profile"} & set(older)
+    assert gate_optional_fields(wire, set(OPTIONAL_FIELDS)) == wire
 
 
 def test_gate_optional_fields_keeps_only_what_the_server_accepts() -> None:
