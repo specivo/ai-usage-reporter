@@ -1,0 +1,22 @@
+{
+  "schema": "specivo.ai-usage.v1",
+  "client": {"name": "ai-usage-reporter", "version": "1.0.0"},
+  "records": [
+    {
+      "idempotency_key": "example-route-and-billing-account",
+      "tool": "codex",
+      "provider": "openai",
+      "model": "gpt-5-codex",
+      "session_id": "019a5c7e-codex-session",
+      "usage_date": "2026-11-05",
+      "started_at": "2026-11-05T09:00:00+07:00",
+      "ended_at": "2026-11-05T02:45:00Z",
+      "request_count": 12,
+      "tokens": {"input": 4000, "output": 1500, "cache_read": 60000},
+      "cost_type": "api",
+      "route": "llm-gateway.example.com",
+      "billing_account": "acme-gateway",
+      "attribution": {"project_key": "ACME"}
+    }
+  ]
+}

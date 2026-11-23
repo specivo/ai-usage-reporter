@@ -44,7 +44,7 @@ trailing slash (`/api/v1/ai-usage/ingest/`) works too.
 
 | Method and path | Purpose |
 |---|---|
-| `GET /api/v1/ai-usage/ingest` | What the server accepts: versions, limits, its clock, known tools and currencies |
+| `GET /api/v1/ai-usage/ingest` | What the server accepts: versions, limits, its clock, known tools and currencies, optional fields |
 | `POST /api/v1/ai-usage/ingest` | Send a batch of usage records |
 
 Authenticate with an API key in the `Authorization` header:
@@ -71,7 +71,8 @@ works (the web app's cookie), but reporters should use a key.
   "server_time": "2026-11-06T12:00:00.123456Z",
   "tools": ["claude-code", "codex", "gemini-cli"],
   "currencies": ["EUR", "THB", "USD"],
-  "issue_ref_sources": ["explicit", "env", "agent_log"]
+  "issue_ref_sources": ["explicit", "env", "agent_log"],
+  "optional_fields": ["route", "billing_account"]
 }
 ```
 
@@ -80,6 +81,8 @@ compare clocks. `rate_limit` is `null` when the server does not limit batches.
 `issue_ref_sources` lists the values of `attribution.issue_ref_source` the server knows; a
 server that leaves it out knows `explicit` and `env` only, and a reporter should not send it
 `agent_log` (see [Issue attribution](#issue-attribution)).
+`optional_fields` lists the record properties added within v1 that the server accepts (see
+[Optional fields](#optional-fields)); a server that leaves it out accepts none of them.
 
 ## The batch
 
@@ -119,6 +122,8 @@ Only five properties are required. Everything else may be left out or set to `nu
 | `reported_cost` | no | What the provider charged: `{"amount": "1.2345", "currency": "USD"}`. The amount is a string with at most 12 integer and 8 fractional digits; the currency must be one the server knows. |
 | `cost_type` | no | `subscription`, `api`, `local`, `free` or `unknown`. See [Costs](#costs). |
 | `subscription_hint` | no | The plan the tool reports, e.g. `claude-max-20x`. Informational; not stored by v1 servers. |
+| `route` | no | Raw id of the backend the requests went through (1 to 100 characters, no control characters), e.g. a gateway host. See [Optional fields](#optional-fields). |
+| `billing_account` | no | Slug of the billing account that paid (1 to 64 characters of `a-z`, `0-9` and `-`, starting with a letter or digit). See [Optional fields](#optional-fields). |
 | `on_behalf_of` | no | Login of the person the usage belongs to. See [Reporting for someone else](#reporting-for-someone-else). |
 | `attribution` | no | Hints for the issue and project. See [Issue attribution](#issue-attribution). |
 
@@ -135,6 +140,21 @@ Only five properties are required. Everything else may be left out or set to `nu
 
 Normalise before sending: some providers count cached tokens inside `input`. Subtract them,
 so that every token is counted in exactly one class.
+
+### Optional fields
+
+Some record properties were added within v1. A server lists the ones it accepts in the `GET`
+property `optional_fields`, and a reporter sends such a property **only to a server that lists
+it**. An older server would ignore it with the warning `unknown_fields`, so the value would be
+lost without an error.
+
+| Property | Added for |
+|---|---|
+| `route` | The backend the requests went through, as the tool names it: a gateway host, a Codex `model_provider`, an OpenCode provider id. It is the raw id, stored as is; `provider` stays the model's maker and pricing never uses the route. |
+| `billing_account` | The billing account that paid for the usage, by its slug in Specivo, when the reporter's configuration names one. |
+
+Both are optional and may be `null`. A value that breaks its format rejects the record with
+`invalid_record` and `field` naming the property.
 
 ### Long-context tokens
 
@@ -476,7 +496,8 @@ the record was rejected; an unknown warning code means it was stored.
 - **Within v1, changes are additive.** New optional properties may appear in records, in the
   batch and in responses. Nothing required is added, nothing is removed, and no meaning
   changes. Additions so far: the `issue_ref_source` value `agent_log` and the `GET` property
-  `issue_ref_sources` that tells a reporter whether the server knows it.
+  `issue_ref_sources` that tells a reporter whether the server knows it; the record properties
+  `route` and `billing_account` and the `GET` property `optional_fields` that lists them.
 - **Clarifications** within v1 make explicit what the contract always meant and how Specivo
   has always processed it; they do not change the format. One so far: `tokens` and
   `long_context_tokens` are disjoint buckets whose sum is the usage (see

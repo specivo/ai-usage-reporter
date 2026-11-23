@@ -105,3 +105,20 @@ def test_per_record_errors_and_unknown_codes(server: FakeServer) -> None:
     assert outcomes[0].accepted and outcomes[0].warnings == ["attribution_dropped"]
     assert (outcomes[1].status, outcomes[1].error_code) == ("rejected", "key_conflict")
     assert (outcomes[2].status, outcomes[2].error_code) == ("rejected", "brand_new")
+
+
+def test_optional_fields_come_from_the_info_and_default_to_none(server: FakeServer) -> None:
+    assert _sink(server).accepted_optional_fields() == frozenset()
+    server.info = {**INFO, "optional_fields": ["route", "billing_account", "later_field"]}
+    assert _sink(server).accepted_optional_fields() == frozenset({"route", "billing_account", "later_field"})
+    server.info = {**INFO, "optional_fields": "route"}
+    assert _sink(server).accepted_optional_fields() == frozenset()
+
+
+def test_fields_the_server_does_not_list_are_never_posted(server: FakeServer) -> None:
+    wire = make_record(route="openrouter", billing_account="acme-gateway").to_wire()
+    _sink(server).send([wire])
+    assert "route" not in server.posts[-1][0] and "billing_account" not in server.posts[-1][0]
+    server.info = {**INFO, "optional_fields": ["route"]}
+    _sink(server).send([wire])
+    assert server.posts[-1][0]["route"] == "openrouter" and "billing_account" not in server.posts[-1][0]

@@ -257,3 +257,26 @@ def test_without_the_server_saying_so_an_unchanged_bucket_is_not_retried(server:
     with State.in_memory() as state:
         deliver([record], _sink(server), state)
         assert deliver([record], _sink(server), state).sent == 0
+
+
+def test_optional_fields_are_sent_once_the_server_lists_them(server: FakeServer) -> None:
+    record = make_record(route="llm-gateway.example.com", billing_account="acme-gateway")
+    with State.in_memory() as state:
+        assert deliver([record], _sink(server), state).sent == 1
+        assert "route" not in server.posts[-1][0] and "billing_account" not in server.posts[-1][0]
+        # Nothing changed on either side: the bucket is not sent again.
+        assert deliver([record], _sink(server), state).sent == 0
+        # The server is upgraded: the unchanged bucket goes once more, now with both fields.
+        server.info["optional_fields"] = ["route", "billing_account"]
+        assert deliver([record], _sink(server), state).sent == 1
+        assert server.posts[-1][0]["route"] == "llm-gateway.example.com"
+        assert server.posts[-1][0]["billing_account"] == "acme-gateway"
+        assert deliver([record], _sink(server), state).sent == 0
+
+
+def test_json_sink_writes_the_optional_fields() -> None:
+    import io
+
+    out = io.StringIO()
+    deliver([make_record(route="openrouter")], JsonSink(stream=out), None)
+    assert '"route": "openrouter"' in out.getvalue() or '"route":"openrouter"' in out.getvalue()

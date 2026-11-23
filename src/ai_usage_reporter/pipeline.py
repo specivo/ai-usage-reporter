@@ -22,7 +22,15 @@ from ai_usage_reporter.dedup import deduplicate
 from ai_usage_reporter.enrich import Enricher, GitInfo
 from ai_usage_reporter.longcontext import Thresholds
 from ai_usage_reporter.model import SourceBusyError, TokenCounts, UsageEvent
-from ai_usage_reporter.record import AGENT_LOG, ContractRecord, RecordError, canonical_json, opaque_session_id
+from ai_usage_reporter.record import (
+    AGENT_LOG,
+    OPTIONAL_FIELDS,
+    ContractRecord,
+    RecordError,
+    canonical_json,
+    gate_optional_fields,
+    opaque_session_id,
+)
 from ai_usage_reporter.segments import segment_issues, split_markers
 from ai_usage_reporter.sinks import PENDING, Outcome, Sink
 from ai_usage_reporter.state import CONFLICT, REJECTED, SENT, FileIdentity, State
@@ -391,6 +399,11 @@ def deliver(
 ) -> DeliverySummary:
     summary = DeliverySummary(records=len(records))
     wires = [r.to_wire() for r in records]
+    accepted = getattr(sink, "accepted_optional_fields", None)
+    if callable(accepted) and any(name in w for w in wires for name in OPTIONAL_FIELDS):
+        # Before hashing: a bucket sent without them goes again once the server lists them.
+        fields = accepted()
+        wires = [gate_optional_fields(w, fields) for w in wires]
     ledger = state if (state is not None and sink.records_state) else None
     now = datetime.now(UTC)
     #: The hash of each record as built, when what is sent differs from it.

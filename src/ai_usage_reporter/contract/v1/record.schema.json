@@ -134,6 +134,24 @@
       "maxLength": 100,
       "description": "Plan the tool reports, e.g. claude-max-20x. Informational; v1 servers do not store it."
     },
+    "route": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+      "description": "Raw id of the backend the requests went through, as the tool names it: a gateway host, a Codex model_provider, an OpenCode provider id. Never used for pricing. Send it only to a server that lists 'route' in optional_fields."
+    },
+    "billing_account": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+      "description": "Slug of the billing account that paid for the usage (1 to 64 characters of a-z, 0-9 and '-'). Send it only to a server that lists 'billing_account' in optional_fields."
+    },
     "on_behalf_of": {
       "type": [
         "string",

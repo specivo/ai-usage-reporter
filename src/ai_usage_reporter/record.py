@@ -12,6 +12,10 @@ allowlist, field by field, and checks every value against the contract's
 format. An optional value that does not fit is left out rather than sent; a
 required value that does not fit raises :class:`RecordError`. Every sink and
 every command that prints a payload goes through :func:`to_wire`.
+
+Properties added within v1 (:data:`OPTIONAL_FIELDS`) are built like the others;
+:func:`gate_optional_fields` removes the ones a server does not list in its
+``optional_fields``, so they only reach servers that accept them.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Collection
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from decimal import ROUND_HALF_UP, Decimal
@@ -30,6 +35,8 @@ COST_TYPES = ("subscription", "api", "local", "free", "unknown")
 #: Where an issue_ref came from: the person named it, SPECIVO_ISSUE, or the agent's own Specivo calls.
 ISSUE_REF_SOURCES = ("explicit", "env", "agent_log")
 AGENT_LOG = "agent_log"
+#: Record properties added within v1: sent only to a server that lists them in ``optional_fields``.
+OPTIONAL_FIELDS = ("route", "billing_account")
 MAX_COUNT = 10**12
 MAX_REQUESTS = 100_000_000
 
@@ -40,6 +47,7 @@ _PROJECT = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,127}$")
 _SHA = re.compile(r"^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$")
 _AMOUNT = re.compile(r"^(0|[1-9][0-9]{0,11})(\.[0-9]{1,8})?$")
 _CURRENCY = re.compile(r"^[A-Z]{3}$")
+_ACCOUNT = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 # A session id is sent as is only when it looks like an opaque token.
 _OPAQUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 # host/owner/repo: no scheme, no credentials, no local path.
@@ -91,6 +99,10 @@ class ContractRecord:
     subscription_hint: str | None = None
     on_behalf_of: str | None = None
     attribution: Attribution | None = None
+    #: Raw id of the backend the requests went through (a gateway host, a provider id).
+    route: str | None = None
+    #: Slug of the billing account in Specivo that paid for the usage.
+    billing_account: str | None = None
 
     def to_wire(self) -> dict[str, Any]:
         return to_wire(self)
@@ -236,6 +248,10 @@ def to_wire(record: ContractRecord) -> dict[str, Any]:
         "cost_type": record.cost_type if record.cost_type in COST_TYPES else None,
         "subscription_hint": _text(record.subscription_hint, 100),
         "on_behalf_of": _text(record.on_behalf_of, 255),
+        "route": _text(record.route, 100),
+        "billing_account": record.billing_account
+        if record.billing_account and _ACCOUNT.match(record.billing_account)
+        else None,
     }
     for name, value in optional.items():
         if value is not None:
@@ -256,6 +272,14 @@ def to_wire(record: ContractRecord) -> dict[str, Any]:
     if attribution:
         wire["attribution"] = attribution
     return wire
+
+
+def gate_optional_fields(wire: dict[str, Any], accepted: Collection[str]) -> dict[str, Any]:
+    """*wire* without the :data:`OPTIONAL_FIELDS` that are not in *accepted*; *wire* itself when nothing goes."""
+    drop = [name for name in OPTIONAL_FIELDS if name in wire and name not in accepted]
+    if not drop:
+        return wire
+    return {key: value for key, value in wire.items() if key not in drop}
 
 
 def canonical_json(value: Any) -> str:

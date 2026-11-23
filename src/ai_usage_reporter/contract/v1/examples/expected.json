@@ -21,6 +21,9 @@
     ],
     "on-behalf.json": [
       {"status": "created", "method": "explicit", "issue_ref": null, "project_key": "ACME"}
+    ],
+    "route-and-billing-account.json": [
+      {"status": "created", "method": "explicit", "issue_ref": null, "project_key": "ACME"}
     ]
   },
   "invalid": {
@@ -40,7 +43,9 @@
         {"code": "invalid_record", "field": "usage_date", "schema_valid": true},
         {"code": "currency_unknown", "field": "reported_cost.currency", "schema_valid": true},
         {"code": "not_found", "field": "attribution.issue_ref", "schema_valid": true},
-        {"code": "target_unknown", "field": "on_behalf_of", "schema_valid": true}
+        {"code": "target_unknown", "field": "on_behalf_of", "schema_valid": true},
+        {"code": "invalid_record", "field": "route", "schema_valid": false},
+        {"code": "invalid_record", "field": "billing_account", "schema_valid": false}
       ]
     }
   }

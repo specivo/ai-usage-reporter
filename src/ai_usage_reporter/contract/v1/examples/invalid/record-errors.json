@@ -80,6 +80,22 @@
       "tokens": {"input": 1},
       "attribution": {"project_key": "ACME"},
       "on_behalf_of": "nobody-by-this-login"
+    },
+    {
+      "idempotency_key": "example-route-too-long",
+      "tool": "codex",
+      "model": "gpt-5-codex",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 1},
+      "route": "llm-gateway.example.com/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    {
+      "idempotency_key": "example-billing-account-not-a-slug",
+      "tool": "codex",
+      "model": "gpt-5-codex",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 1},
+      "billing_account": "Acme Gateway"
     }
   ]
 }
