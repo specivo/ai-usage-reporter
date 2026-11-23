@@ -177,6 +177,22 @@
           ],
           "description": "Where the stored entry is attributed now; null when rejected."
         },
+        "payer": {
+          "enum": [
+            "employer",
+            "employee",
+            "unknown",
+            null
+          ],
+          "description": "Who pays for the stored entry, as the server resolved it; null when rejected. Servers that do not list 'billing_account' in optional_fields leave it out."
+        },
+        "billing_account": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Slug of the billing account the stored entry was paid through; null when none was found or the record was rejected. Servers that do not list 'billing_account' in optional_fields leave it out."
+        },
         "warnings": {
           "type": "array",
           "items": {
