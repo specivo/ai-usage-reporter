@@ -13,7 +13,7 @@ state      macOS ``~/Library/Application Support/...``  ``AI_USAGE_STATE_DIR``
            else ``$XDG_STATE_HOME/ai-usage-reporter``
 =========  ===========================================  =========================
 
-See ``docs/configuration.md`` for every setting.
+See ``docs/index.md`` for every setting.
 """
 
 from __future__ import annotations
@@ -364,7 +364,7 @@ def load_config(path: Path) -> Config:
 
 
 CONFIG_TEMPLATE = """\
-# ai-usage-reporter configuration. See docs/configuration.md.
+# ai-usage-reporter configuration. See docs/index.md.
 
 # Your Specivo server. The API key is not stored here: it lives in the OS
 # keychain, in the SPECIVO_API_KEY environment variable or in the api-key file
