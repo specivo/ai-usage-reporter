@@ -30,20 +30,54 @@ What the transcript format looks like, and what this adapter does with it:
   and the issue key are read. A subagent's markers and usage carry its
   transcript's name as their ``thread``.
 
+- **Route.** Claude Code does not log the endpoint it called, so the route
+  comes from, in this order:
+
+  1. the host of ``ANTHROPIC_BASE_URL`` the reporter's ``SessionStart`` hook
+     saw for the session (kept in the state database; exact per session). A
+     session the hook saw without one goes straight to step 3;
+  2. the host of ``env.ANTHROPIC_BASE_URL`` in the session directory's
+     ``.claude/settings.local.json`` and ``.claude/settings.json``, then in the
+     Claude config directory's ``settings.json`` (today's value, a best guess
+     for older sessions). These ``env`` blocks hold API tokens: every other key
+     is dropped while the file is parsed, and only the host is kept, never the
+     URL or anything in it;
+  3. the transcript's ``session-owner`` line (recent Claude Code versions), as
+     ``claude.ai:org-<first 8 hex of the SHA-256 of organizationUuid>``, which
+     tells a personal login from a company Team or Enterprise login without
+     sending the organization id.
+
+  ``provider`` stays ``anthropic``; the route never changes the price.
+
 ``CLAUDE_CONFIG_DIR`` moves the whole Claude config directory; the
 ``[sources.claude-code] roots`` setting lists other directories to read.
 """
 
 from __future__ import annotations
 
+import dataclasses
+import hashlib
+import json
 from collections.abc import Iterable, Iterator
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from ai_usage_reporter.adapters import DiscoveryContext, HookSpec
 from ai_usage_reporter.adapters._jsonl import get_str, iter_json_lines
+from ai_usage_reporter.adapters._routes import url_host
 from ai_usage_reporter.issue_marks import CREATE, created_issue, marking_call
 from ai_usage_reporter.model import SourceFile, TokenCounts, UsageEvent, count, parse_timestamp
+from ai_usage_reporter.state import State
+
+#: The environment variable that sends Claude Code to another endpoint (a gateway).
+BASE_URL_ENV = "ANTHROPIC_BASE_URL"
+#: Settings files are read up to this size; a bigger one is skipped.
+MAX_SETTINGS_BYTES = 1024 * 1024
+#: Settings files of a session directory, the one that wins first.
+PROJECT_SETTINGS = (Path(".claude") / "settings.local.json", Path(".claude") / "settings.json")
+#: The route of a claude.ai login: the prefix of the hashed organization id.
+ORG_ROUTE_PREFIX = "claude.ai:org-"
 
 
 def _config_dirs(ctx: DiscoveryContext) -> list[Path]:
@@ -77,6 +111,33 @@ def session_from_path(path: Path) -> str:
     return path.name.split(".", 1)[0]
 
 
+def org_route(organization: str | None) -> str | None:
+    """The route of a claude.ai organization: never the id itself, only a short hash of it."""
+    if not organization or not organization.strip():
+        return None
+    return ORG_ROUTE_PREFIX + hashlib.sha256(organization.strip().encode()).hexdigest()[:8]
+
+
+def _keep_base_url(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    # Called for every JSON object while a settings file is parsed: whatever is not
+    # on the path env.ANTHROPIC_BASE_URL (tokens and keys among it) is dropped at once.
+    return {key: value for key, value in pairs if key in ("env", BASE_URL_ENV)}
+
+
+def settings_host(path: Path) -> str | None:
+    """The host of ``env.ANTHROPIC_BASE_URL`` in a settings file, and nothing else from it."""
+    try:
+        if not path.is_file() or path.stat().st_size > MAX_SETTINGS_BYTES:
+            return None
+        data = json.loads(path.read_bytes(), object_pairs_hook=_keep_base_url)
+    except (OSError, ValueError):
+        return None
+    env = data.get("env") if isinstance(data, dict) else None
+    url = env.get(BASE_URL_ENV) if isinstance(env, dict) else None
+    host = url_host(url) if isinstance(url, str) else None
+    return host[:100] if host else None
+
+
 def _usage_tokens(usage: dict[str, Any]) -> TokenCounts:
     split = usage.get("cache_creation")
     if isinstance(split, dict):
@@ -96,7 +157,15 @@ def _usage_tokens(usage: dict[str, Any]) -> TokenCounts:
 class ClaudeCodeAdapter:
     name = "claude-code"
     provider = "anthropic"
-    parser_version = "claude-code/2"
+    parser_version = "claude-code/3"
+
+    def __init__(self) -> None:
+        #: Session -> the base URL host the hook saw ('' for none), for the parses of one run.
+        self._hook_routes: dict[str, str] = {}
+
+    def bind_run(self, state: State | None, now: datetime | None) -> None:
+        """The routes the hook recorded, from the pipeline's state database (none after the run)."""
+        self._hook_routes = state.session_routes(self.name) if state is not None else {}
 
     def discover(self, ctx: DiscoveryContext) -> Iterable[SourceFile]:
         for projects in _config_dirs(ctx):
@@ -110,7 +179,13 @@ class ClaudeCodeAdapter:
         thread = src.path.name.split(".", 1)[0] if is_subagent_file else None
         #: specivo_create_issue calls waiting for their result: tool_use id -> (time, session, cwd).
         creating: dict[str, tuple[Any, str, str | None]] = {}
+        #: Usage waits for the end of the file, where the organization line (wherever it was) is known.
+        usage: list[UsageEvent] = []
+        organization: str | None = None
         for line in iter_json_lines(src.path, src.stats):
+            if line.get("type") == "session-owner":
+                organization = organization or get_str(line, "organizationUuid")
+                continue
             message = line.get("message")
             if not isinstance(message, dict):
                 continue
@@ -143,7 +218,7 @@ class ClaudeCodeAdapter:
             main = self._event(common, get_str(message, "model"), message_id, message["usage"])
             if main is not None:
                 src.stats.events += 1
-                yield main
+                usage.append(main)
             iterations = message["usage"].get("iterations")
             if isinstance(iterations, list):
                 advisors = [i for i in iterations if isinstance(i, dict) and i.get("type") == "advisor_message"]
@@ -152,7 +227,34 @@ class ClaudeCodeAdapter:
                     extra = self._event(common, get_str(item, "model"), advisor_id, item)
                     if extra is not None:
                         src.stats.events += 1
-                        yield extra
+                        usage.append(extra)
+        fallback = org_route(organization)
+        settings: dict[str | None, str | None] = {}
+        for event in usage:
+            route = self._route(src, event, file_session, settings)
+            yield dataclasses.replace(event, route=route or fallback) if (route or fallback) else event
+
+    def _route(
+        self, src: SourceFile, event: UsageEvent, file_session: str, settings: dict[str | None, str | None]
+    ) -> str | None:
+        """The gateway host for *event*: the hook's record, else the settings files (see the module docs)."""
+        for session in (event.session_id, file_session):
+            if session in self._hook_routes:
+                return self._hook_routes[session] or None
+        if event.cwd not in settings:
+            settings[event.cwd] = self._settings_host(src, event.cwd)
+        return settings[event.cwd]
+
+    @staticmethod
+    def _settings_host(src: SourceFile, cwd: str | None) -> str | None:
+        files = [Path(cwd) / name for name in PROJECT_SETTINGS] if cwd else []
+        # The root is the config directory's projects/ folder.
+        files.append(src.root.parent / "settings.json")
+        for path in files:
+            host = settings_host(path)
+            if host:
+                return host
+        return None
 
     def _marks(
         self,
@@ -232,6 +334,9 @@ class ClaudeCodeAdapter:
     def hook(self) -> HookSpec:
         return HookSpec(
             kind="claude-settings-hook",
-            events=("SessionEnd", "Stop"),
-            notes="settings.json hooks; stdin gives session_id, transcript_path and cwd",
+            events=("SessionStart", "SessionEnd", "Stop"),
+            notes=(
+                "settings.json hooks; stdin gives session_id, transcript_path and cwd;"
+                " SessionStart only records the route"
+            ),
         )

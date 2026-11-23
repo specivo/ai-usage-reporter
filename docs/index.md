@@ -118,7 +118,7 @@ every one, `uninstall` to take it out again):
 
 | Tool | Installed into | Runs |
 |---|---|---|
-| Claude Code | `settings.json` in `~/.claude` (or `CLAUDE_CONFIG_DIR`): a command hook on `SessionEnd` and `Stop` | `ai-usage hook claude-code`, which reads `session_id` from the hook's input |
+| Claude Code | `settings.json` in `~/.claude` (or `CLAUDE_CONFIG_DIR`): a command hook on `SessionStart`, `SessionEnd` and `Stop` | `ai-usage hook claude-code`, which reads `session_id` from the hook's input; `SessionStart` only records the session's route (see [Route and provider](#route-and-provider)) |
 | Codex CLI | `config.toml` in `~/.codex` (or `CODEX_HOME`): the `notify` program, on `agent-turn-complete` | `ai-usage hook codex`, which reads `thread-id` from the notification |
 | Gemini CLI | `~/.gemini/settings.json`: a command hook on `SessionEnd` and `AfterAgent` | `ai-usage hook gemini-cli`, which reads `session_id` from the hook's input |
 | OpenCode | `~/.config/opencode/plugins/specivo-ai-usage-reporter.js` (`XDG_CONFIG_HOME` moves it) | `ai-usage push --source opencode --session <id>` when a session goes idle |
@@ -140,6 +140,8 @@ How they behave:
 - **`SPECIVO_ISSUE`** set where you start the tool reaches the push, and the session is attributed
   to that issue. Gemini CLI runs hooks with a reduced environment, so there it may not arrive.
 - Gemini CLI's `/hooks` command lists the installed hook and can switch it off.
+- Claude Code hooks installed before the reporter knew `SessionStart` miss the route of new
+  sessions until you run `ai-usage hooks install --tool claude-code` again.
 - The hooks name the reporter by its full path. After reinstalling the reporter somewhere else,
   run `ai-usage hooks install` again.
 
@@ -299,9 +301,27 @@ Specivo prices by. Both are sent only to servers that list `route` in `optional_
 |---|---|---|
 | Codex | `model_provider` of the session (`openai`, or the id of a `[model_providers.<id>]` profile in `config.toml`) | `openai` for OpenAI's models (`gpt-*`, `o*`, `codex-*`) whatever the profile; a local engine (`ollama`, `lmstudio`) gives `local` and `cost_type = local`; other models the maker the profile or the model id names, else none (Specivo prices by model name) |
 | OpenCode | `providerID` (`anthropic`, `openrouter`, `github-copilot`, a custom provider) | a known maker's id (`anthropic`, `openai`, `deepseek`, `zhipuai`, `moonshotai` and the like, under Specivo's names); through a gateway such as `openrouter` the model id's prefix; for a bundle or custom provider none, so Specivo prices by model name |
+| Claude Code | the host of `ANTHROPIC_BASE_URL` (a gateway), else `claude.ai:org-<hash>` for a claude.ai login | `anthropic` |
 | Hermes | the billing provider (see [Hermes Agent](#hermes-agent)) | the model's maker |
 
 Codex rollouts written before Codex logged `model_provider` have no route and keep `openai`.
+
+**Claude Code** does not log the endpoint it called, so the reporter looks, in this order:
+
+1. The host of `ANTHROPIC_BASE_URL` that the `SessionStart` hook saw (exact per session; install
+   the hooks to get it). The hook keeps only the host, in the local state database. A session it
+   saw without a base URL skips step 2.
+2. `env.ANTHROPIC_BASE_URL` in the session directory's `.claude/settings.local.json` and
+   `.claude/settings.json`, then in `~/.claude/settings.json` (or `CLAUDE_CONFIG_DIR`). This is
+   today's value, a best guess for older sessions. These `env` blocks hold API tokens: the reporter
+   drops every other key while it parses the file and keeps only the host, never the URL, user,
+   password, port or path.
+3. The organization of the claude.ai login, from the transcript's `session-owner` line (recent
+   Claude Code versions), as `claude.ai:org-` and the first 8 hex digits of its SHA-256. It tells
+   a personal login from a company Team or Enterprise login; the organization id itself is never
+   sent.
+
+Without any of them the route is left out.
 
 ## Hermes Agent
 
@@ -430,6 +450,9 @@ your repositories in `[projects]` to get the precise reasons.
 - The local state database keeps the paths of the log files it read, to skip unchanged ones, and
   the records it sent. It stays on your machine.
 - `exclude_paths` in the config keeps sessions that ran in those directories out entirely.
+- For the Claude Code route, only the host of `ANTHROPIC_BASE_URL` is read from Claude Code's
+  settings files and hook environment (those hold API tokens; nothing else is kept), and the
+  claude.ai organization id is sent only as an 8-digit hash.
 - The API key is only sent over `https://` (or to this machine), and redirects are never
   followed, so the key cannot be forwarded to another address. A server that redirects makes
   `push` stop with an error naming the target; put the final address in `url`.

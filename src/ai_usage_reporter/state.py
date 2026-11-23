@@ -19,6 +19,10 @@
   (``hermes_counters``) and the growth it observed per UTC day
   (``hermes_usage``). See :mod:`ai_usage_reporter.adapters.hermes`. Local only,
   like ``files``.
+- ``session_routes``: the route a tool's hook saw when a session started (for
+  Claude Code, the host of ``ANTHROPIC_BASE_URL``; ``''`` when it was unset).
+  Only the host is kept, never the URL. See
+  :mod:`ai_usage_reporter.adapters.claude_code`.
 """
 
 from __future__ import annotations
@@ -34,9 +38,22 @@ from typing import Any
 
 from ai_usage_reporter.model import UsageEvent
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+#: The state database's file name in the state directory.
+STATE_FILE = "state.db"
 
-_SCHEMA = """
+_SESSION_ROUTES = """
+CREATE TABLE IF NOT EXISTS session_routes (
+    tool TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    host TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY (tool, session_id)
+)
+"""
+
+_SCHEMA = (
+    """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS files (
     path TEXT PRIMARY KEY,
@@ -127,6 +144,9 @@ CREATE TABLE IF NOT EXISTS runs (
     summary TEXT NOT NULL DEFAULT '{}'
 );
 """
+    + _SESSION_ROUTES
+    + ";\n"
+)
 
 #: Statuses of a bucket row.
 SENT = "sent"
@@ -408,6 +428,13 @@ class State:
     def session_issues(self) -> dict[str, str]:
         return {r["session_id"]: r["issue_ref"] for r in self.db.execute("SELECT * FROM session_hints")}
 
+    # -- session routes ----------------------------------------------------------
+
+    def session_routes(self, tool: str) -> dict[str, str]:
+        """The route host each session of *tool* started with (``''``: none was set)."""
+        rows = self.db.execute("SELECT session_id, host FROM session_routes WHERE tool = ?", (tool,))
+        return {str(r["session_id"]): str(r["host"]) for r in rows}
+
     # -- meta --------------------------------------------------------------------
 
     def meta(self, key: str) -> str | None:
@@ -444,3 +471,29 @@ class State:
 
     def commit(self) -> None:
         self.db.commit()
+
+
+def record_session_route(path: Path, tool: str, session_id: str, host: str, *, replace: bool, timeout: float) -> None:
+    """Keep the route *host* a hook saw for a session, without opening the whole state.
+
+    Hooks call this, so it waits at most *timeout* seconds for a push that holds
+    the database. Without *replace* a session already recorded is left as it is
+    (and nothing is written).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(str(path), timeout=timeout)
+    try:
+        db.execute(_SESSION_ROUTES)
+        if not replace:
+            found = db.execute(
+                "SELECT 1 FROM session_routes WHERE tool = ? AND session_id = ?", (tool, session_id)
+            ).fetchone()
+            if found is not None:
+                return
+        db.execute(
+            "INSERT OR REPLACE INTO session_routes (tool, session_id, host, recorded_at) VALUES (?, ?, ?, ?)",
+            (tool, session_id, host, _now()),
+        )
+        db.commit()
+    finally:
+        db.close()
