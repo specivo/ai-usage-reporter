@@ -5,7 +5,7 @@ to [Specivo](https://specivo.io): tokens by class, requests, the model, the sess
 the issue the work was for. Specivo prices the usage, shows it next to the time logged on issues
 and adds it to the project's spend reports.
 
-- Reads **Claude Code**, **Codex CLI**, **Gemini CLI** and **OpenCode** logs, and imports the
+- Reads **Claude Code**, **Codex CLI**, **Gemini CLI**, **OpenCode** and **Hermes Agent** logs, and imports the
   daily report of [ccusage](https://ccusage.com) for other tools. More tools can be added as plugins.
 - Speaks the Specivo AI usage ingest contract `specivo.ai-usage.v1` (Specivo 0.13.0 or later).
 - Python 3.11 or later, standard library only. macOS, Linux and Windows.
@@ -14,8 +14,8 @@ and adds it to the project's spend reports.
 
 Full documentation: [`docs/index.md`](docs/index.md), shipped with the package.
 
-Claude Code is a product of Anthropic, Codex of OpenAI, Gemini CLI of Google, and OpenCode and
-ccusage are open-source projects. This tool is not affiliated with or endorsed by any of them; their
+Claude Code is a product of Anthropic, Codex of OpenAI, Gemini CLI of Google, Hermes Agent of Nous
+Research, and OpenCode and ccusage are open-source projects. This tool is not affiliated with or endorsed by any of them; their
 names only say which logs it reads.
 
 ## Install
@@ -61,7 +61,7 @@ uv tool install "specivo-ai-usage-reporter[keyring,zstd] @ git+https://github.co
 
 | Option | Meaning |
 |---|---|
-| `--source claude-code` | Only this source (repeatable): `claude-code`, `codex`, `gemini-cli`, `opencode` |
+| `--source claude-code` | Only this source (repeatable): `claude-code`, `codex`, `gemini-cli`, `opencode`, `hermes` |
 | `--session ID` | Only this session. With `SPECIVO_ISSUE=ACME-12` set, the session is attributed to that issue, now and in later pushes |
 | `--since 2026-10-01` | Only UTC days on or after this date |
 | `--dry-run` | Print the records instead of sending them; nothing is written |
@@ -101,6 +101,38 @@ ai-usage schedule remove
 
 With cron instead: `*/30 * * * * ai-usage push >/dev/null 2>&1`.
 
+## Hermes Agent
+
+The `hermes` source reads Hermes's `state.db` in its home (`$HERMES_HOME`, by default `~/.hermes`)
+and in every profile (`profiles/<name>/state.db`). Run the reporter on the host where Hermes runs;
+it opens the databases read-only. Hermes keeps running totals per session and model rather than a
+row per request, so each push records how much they grew since the last one, on the UTC day they
+grew. Pushing again never counts anything twice, and a session's subagent, branch and compression
+children are counted in their root session. Each record also carries:
+
+- `route`: Hermes's billing provider as it is (`openrouter`, `nous`, `openai-codex`, `custom`), and
+  `provider`: the model's maker (through OpenRouter, the model id's prefix, `local` for a local engine
+  or a private endpoint);
+- `cost_type = subscription` for usage Hermes marks as included in a subscription, `local` for local
+  engines, and the cost OpenRouter reported when Hermes has it;
+- `profile`: the Hermes profile (`default` for the home itself), and `unattended` for cron runs.
+
+`ai-usage schedule install` pushes every 30 minutes. To push when a session ends too, add a shell
+hook to Hermes's `config.yaml` (Hermes asks to approve it on first use):
+
+```yaml
+hooks:
+  on_session_end:
+    - command: ai-usage push --source hermes
+      timeout: 60
+```
+
+Hermes in Docker: mount its data directory read-only into the reporter's environment and point the
+source at it with `[sources.hermes] roots = ["/opt/data"]`. Hermes changes its database often; a
+`state.db` the reporter cannot read is skipped with a message in `push` and `ai-usage doctor` (the
+other sources go on), and one newer than the reporter was tested with (schema 33) is read by its
+columns, with a note.
+
 ## Other tools: import ccusage
 
 [ccusage](https://ccusage.com) reads the logs of many more tools. Its daily report can be imported
@@ -123,7 +155,8 @@ that runs past midnight UTC, or switches models, becomes several records. Each r
   `cache_write_1h`, `cache_read`, `reasoning`) and the number of requests;
 - the tool and its version, the provider and the model;
 - the tool's session id (an opaque id; anything else is replaced by a hash);
-- the cost the tool reported, when it reports one for every request of the bucket (OpenCode);
+- the cost the tool reported, when it reports one for every request of the bucket (OpenCode,
+  Hermes through OpenRouter);
 - the first and last request of the bucket, as UTC timestamps;
 - attribution hints: the issue from `SPECIVO_ISSUE` or, without it, the issue the agent marked
   with its own Specivo tool calls (see below), the git branch, the repository as
@@ -138,15 +171,15 @@ that runs past midnight UTC, or switches models, becomes several records. Each r
   opaque id like the session id), whether it was an unattended run (cron, scheduled) and the agent
   profile it came from. Like `route`, they go only to servers that list them in `optional_fields`.
 
-Subagent work (Claude Code's Task tool and sidechains, Gemini CLI subagents, OpenCode child
-sessions) is counted in its parent session, so a session's total includes what it fanned out.
+Subagent work (Claude Code's Task tool and sidechains, Gemini CLI subagents, OpenCode and Hermes
+child sessions) is counted in its parent session, so a session's total includes what it fanned out.
 
 A long session that works on several issues is split by the issues the agent marked: when it
 changes an issue's status or assignee, starts a timer on one or creates one through Specivo's MCP
 tools, its usage from then on counts for that issue, and usage before the first mark counts for the
 first marked issue. Subagents count for the issue they marked, else for the one the session worked
 on when they started. Only the tool name and the issue key are read from those calls. Claude Code,
-Codex and OpenCode 2 transcripts show the calls; `agent_log_issues = false` turns it off.
+Codex, OpenCode 2 and Hermes transcripts show the calls; `agent_log_issues = false` turns it off.
 
 ## Privacy
 
@@ -190,6 +223,9 @@ subscription_hint = "claude-max-20x"
 [sources.opencode]
 roots = ["~/.local/share/opencode"]  # the default; XDG_DATA_HOME moves it
 project = "ACME"                     # its project when no [projects] repository pattern matches
+
+[sources.hermes]
+roots = ["/opt/data"]                # a Hermes home mounted from Docker; the default is ~/.hermes
 
 [sources.gemini-cli]
 via = "ccusage"                      # count Gemini CLI through "ai-usage import ccusage" instead

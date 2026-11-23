@@ -219,11 +219,13 @@ class Enricher:
             ended_at=bucket.ended_at,
             request_count=bucket.request_count,
             reported_cost=reported,
-            cost_type=rule.cost_type if rule else None,
+            # A [[cost_rules]] entry is the person's word and wins over what the tool says.
+            cost_type=rule.cost_type if rule and rule.cost_type else bucket.cost_type,
             subscription_hint=rule.subscription_hint if rule else None,
             on_behalf_of=self.config.on_behalf_of,
             attribution=attribution,
             parent_session_id=bucket.parent_session,
             unattended=bucket.unattended,
             profile=bucket.profile,
+            route=bucket.route,
         )

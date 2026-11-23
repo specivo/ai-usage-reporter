@@ -86,6 +86,13 @@ Some tools keep their history in SQLite (OpenCode does). Treat the database as s
       the older layouts the tool migrated from when it is cheap.
 - [ ] Build the fixture database in the test (see `tests/fixtures/opencode_home.py`) rather than
       committing a binary file.
+- [ ] When the tool keeps running totals instead of a row per request (Hermes does), keep the
+      last totals and the observed growth in the reporter's state (the adapter's `bind_run(state,
+      now)` receives them; see `adapters/hermes.py`) and yield every observed growth on each parse,
+      so a record always holds its bucket's complete totals.
+- [ ] When the tool's schema changes often, raise `SourceSchemaError` with a message that says
+      what to update, and add a fixture per schema version (`tests/fixtures/hermes_home.py`).
+      `make hermes-schema-check` compares a Hermes checkout's DDL with the columns read.
 
 ### Hooks
 

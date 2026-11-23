@@ -77,10 +77,21 @@ class ParseStats:
     malformed_lines: int = 0
     events: int = 0
     skipped_events: int = 0
+    #: Things about the file the person should know (a schema newer than the
+    #: adapter was tested with, counters that went back); shown by ``push`` and ``doctor``.
+    notes: list[str] = field(default_factory=list)
 
 
 class SourceBusyError(Exception):
     """The source is locked by its tool right now; it is skipped and read on the next run."""
+
+
+class SourceSchemaError(Exception):
+    """The tool's data has a layout the adapter cannot read (its schema changed).
+
+    The file is skipped, the other sources go on, and ``push`` and ``doctor``
+    show the message, which tells the person what to update.
+    """
 
 
 @dataclass(slots=True)
@@ -157,6 +168,15 @@ class UsageEvent:
     parent_session: str | None = None
     unattended: bool = False
     profile: str | None = None
+    #: The backend the request went through as the tool names it (a gateway, a
+    #: provider id), when it is not ``provider`` itself; sent as ``route``.
+    route: str | None = None
+    #: How the request is paid when the tool says so (``subscription``, ``local``);
+    #: a matching ``[[cost_rules]]`` entry wins over it.
+    cost_type: str | None = None
+    #: When the requests this event stands for began, for an event that sums
+    #: several (``timestamp`` is the last one). ``None``: at ``timestamp``.
+    span_start: datetime | None = None
 
     @property
     def is_marker(self) -> bool:
@@ -172,7 +192,7 @@ class UsageEvent:
         data: dict[str, Any] = {}
         for f in fields(self):
             value = getattr(self, f.name)
-            if f.name == "timestamp":
+            if f.name in _DATETIME_FIELDS and value is not None:
                 value = value.isoformat()
             elif f.name == "tokens":
                 value = value.as_dict()
@@ -182,13 +202,18 @@ class UsageEvent:
     @classmethod
     def from_cache(cls, data: Mapping[str, Any]) -> UsageEvent:
         values = dict(data)
-        values["timestamp"] = datetime.fromisoformat(values["timestamp"])
+        for name in _DATETIME_FIELDS:
+            if values.get(name) is not None:
+                values[name] = datetime.fromisoformat(values[name])
         values["tokens"] = TokenCounts.from_mapping(values["tokens"])
         known = {f.name for f in fields(cls)}
         return cls(**{k: v for k, v in values.items() if k in known})
 
     def with_session(self, session_id: str) -> UsageEvent:
         return replace(self, session_id=session_id)
+
+
+_DATETIME_FIELDS = ("timestamp", "span_start")
 
 
 def parse_timestamp(value: object) -> datetime | None:

@@ -21,7 +21,7 @@ from ai_usage_reporter.config import Config
 from ai_usage_reporter.dedup import deduplicate
 from ai_usage_reporter.enrich import Enricher, GitInfo
 from ai_usage_reporter.longcontext import Thresholds
-from ai_usage_reporter.model import SourceBusyError, TokenCounts, UsageEvent
+from ai_usage_reporter.model import SourceBusyError, SourceFile, SourceSchemaError, TokenCounts, UsageEvent
 from ai_usage_reporter.record import (
     AGENT_LOG,
     OPTIONAL_FIELDS,
@@ -72,6 +72,10 @@ class SourceReport:
     failed_files: int = 0
     #: Files the tool held locked; they are read on the next run.
     busy_files: int = 0
+    #: Files in a layout the adapter cannot read, with the reason (the tool's schema changed).
+    schema_errors: list[str] = field(default_factory=list)
+    #: What the adapter wants the person to know about the files it read.
+    notes: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -107,9 +111,56 @@ def _parse_file(adapter: Adapter, src: Any, report: SourceReport) -> list[UsageE
     except SourceBusyError:
         report.busy_files += 1
         return None
+    except SourceSchemaError as exc:
+        report.failed_files += 1
+        report.schema_errors.append(str(exc))
+        return None
     except Exception:  # an adapter must not fail the run; the file is retried next time
         report.failed_files += 1
         return None
+
+
+def _read_sources(
+    adapter: Adapter,
+    name: str,
+    sources: Sequence[SourceFile],
+    state: State | None,
+    report: SourceReport,
+    out: list[UsageEvent],
+) -> None:
+    """Parse each source file (or reuse its cached events) into *out*."""
+    for src in sources:
+        try:
+            identity = FileIdentity.of(src.path, src.companions)
+        except OSError:
+            report.failed_files += 1
+            continue
+        cached = state.cached_events(src.path, identity, adapter.parser_version) if state else None
+        if cached is not None:
+            report.reused += 1
+            file_events = cached
+        else:
+            report.parsed += 1
+            parsed = _parse_file(adapter, src, report)
+            report.lines += src.stats.lines
+            report.malformed_lines += src.stats.malformed_lines
+            report.skipped_events += src.stats.skipped_events
+            report.notes.extend(src.stats.notes)
+            if parsed is None:
+                continue
+            file_events = parsed
+            if state is not None:
+                state.store_events(
+                    src.path,
+                    name,
+                    identity,
+                    adapter.parser_version,
+                    file_events,
+                    lines=src.stats.lines,
+                    malformed_lines=src.stats.malformed_lines,
+                    skipped_events=src.stats.skipped_events,
+                )
+        out.extend(file_events)
 
 
 def native_sources(config: Config, registry: Registry) -> tuple[str, ...]:
@@ -152,37 +203,16 @@ def collect(
         report.roots = sorted({str(src.root) for src in sources})
         report.files = len(sources)
         adapter_events: list[UsageEvent] = []
-        for src in sources:
-            try:
-                identity = FileIdentity.of(src.path, src.companions)
-            except OSError:
-                report.failed_files += 1
-                continue
-            cached = state.cached_events(src.path, identity, adapter.parser_version) if state else None
-            if cached is not None:
-                report.reused += 1
-                file_events = cached
-            else:
-                report.parsed += 1
-                parsed = _parse_file(adapter, src, report)
-                report.lines += src.stats.lines
-                report.malformed_lines += src.stats.malformed_lines
-                report.skipped_events += src.stats.skipped_events
-                if parsed is None:
-                    continue
-                file_events = parsed
-                if state is not None:
-                    state.store_events(
-                        src.path,
-                        name,
-                        identity,
-                        adapter.parser_version,
-                        file_events,
-                        lines=src.stats.lines,
-                        malformed_lines=src.stats.malformed_lines,
-                        skipped_events=src.stats.skipped_events,
-                    )
-            adapter_events.extend(file_events)
+        # An adapter that keeps its own reading state (Hermes's counter snapshots) gets this run's state
+        # database and instant for the time of its parses, and nothing outside them.
+        bind = getattr(adapter, "bind_run", None)
+        if callable(bind):
+            bind(state, now)
+        try:
+            _read_sources(adapter, name, sources, state, report, adapter_events)
+        finally:
+            if callable(bind):
+                bind(None, None)
         if state is not None:
             state.forget_missing_files(name, {str(s.path) for s in sources})
         adapter_usage, adapter_markers = split_markers(adapter_events)
@@ -274,6 +304,7 @@ def superseded_records(records: Sequence[ContractRecord], state: State) -> list[
                 parent_session_id=payload.get("parent_session_id"),
                 unattended=payload.get("unattended") is True,
                 profile=payload.get("profile"),
+                route=payload.get("route"),
             )
         )
     return out

@@ -1,5 +1,5 @@
 ---
-description: Report the token usage of Claude Code, Codex, Gemini CLI, OpenCode and the tools ccusage reads to Specivo with the open-source ai-usage reporter. Counts and ids only; prompts, code and paths stay on your machine.
+description: Report the token usage of Claude Code, Codex, Gemini CLI, OpenCode, Hermes Agent and the tools ccusage reads to Specivo with the open-source ai-usage reporter. Counts and ids only; prompts, code and paths stay on your machine.
 ---
 
 # AI usage reporter
@@ -24,6 +24,7 @@ the AI usage ingest contract `specivo.ai-usage.v1`, so it needs Specivo 0.13.0 o
 | Codex CLI (`codex`) | `~/.codex/sessions/` and `~/.codex/archived_sessions/`; `CODEX_HOME` moves them | Active rollouts win over archived copies; compressed rollouts need the `zstd` extra before Python 3.14 |
 | Gemini CLI (`gemini-cli`) | `~/.gemini/tmp/<project>/chats/` (and `~/.cache/.gemini` under the macOS sandbox), JSON and JSONL recordings | Cached prompt tokens are reported as cache reads, thoughts as reasoning; subagents count in their parent session |
 | OpenCode (`opencode`) | `opencode.db` in `~/.local/share/opencode/` (`XDG_DATA_HOME` and `OPENCODE_DB` move it), and the older `storage/` JSON files | Read-only, never locked; child sessions count in their root session; OpenCode's cost is sent as the reported cost |
+| Hermes Agent (`hermes`) | `state.db` in `~/.hermes/` and in each `~/.hermes/profiles/<name>/` (`HERMES_HOME` moves it) | Read-only; running totals read as growth since the last push; child sessions count in their root session; see [Hermes Agent](#hermes-agent) |
 | Others, through [ccusage](https://ccusage.com) | the JSON of `ccusage daily --by-agent --json` | Day totals per tool and model; see [Import ccusage](#import-ccusage) |
 
 More tools can be added as plugins (see [Writing an adapter](#writing-an-adapter)).
@@ -41,6 +42,9 @@ reasoning, cache writes, cache reads and reasoning.
   calls apart from `input` (it is added to input).
 - **OpenCode** stores disjoint classes already: `input` without cache reads and writes, `output`
   without `reasoning`. Its single cache-write count is reported as 5-minute cache writes.
+- **Hermes** stores `input` without cache reads and writes for every provider, and `output` with
+  the reasoning it also reports apart: output is sent as `output - reasoning`. Its single
+  cache-write count is reported as 5-minute cache writes.
 - **ccusage** reports input without the cache; its cache creation is reported as 5-minute cache
   writes. It has no reasoning class and no request counts.
 
@@ -99,7 +103,7 @@ it never adds them up.
 
 | Option | Meaning |
 |---|---|
-| `--source NAME` | Only `claude-code`, `codex`, `gemini-cli` or `opencode` (repeatable) |
+| `--source NAME` | Only `claude-code`, `codex`, `gemini-cli`, `opencode` or `hermes` (repeatable) |
 | `--session ID` | Only this session (a subagent's session id selects its parent session) |
 | `--since YYYY-MM-DD` | Only UTC days on or after this date |
 | `--dry-run` | Print the records instead of sending them; nothing is written locally either |
@@ -274,6 +278,7 @@ of those calls leaves your machine. `ai-usage show-payload` shows the issue of e
 | Claude Code | Yes, main thread and subagents |
 | Codex | Yes (`function_call` and `mcp_tool_call_end` in the rollout) |
 | OpenCode 2 | Yes, for status, assignee and timer calls (also calls made from code); a created issue's key is only read from a direct call's answer. Child sessions are threads of their root session |
+| Hermes | Yes, from the `tool_calls` of assistant messages (`mcp__<server>__specivo_*`); a created issue's key is read from the tool's answer. Child sessions are threads of their root session. Usage is placed at the time Hermes last saw it, so marks split it at push granularity |
 | OpenCode 1, Gemini CLI, `import ccusage` | Not read (OpenCode 1 keeps tool calls in a table of their own, ccusage has day totals only); Specivo's own match of MCP sessions (step 3) still applies |
 
 Set `agent_log_issues = false` to turn it off: sessions are then reported as one record per
@@ -282,6 +287,65 @@ model and day again (segments already pushed are sent with zero tokens).
 A Specivo server older than this feature refuses `agent_log`. The reporter then sends those
 records again without the issue, so the totals stay right, and leaves the issue out for the next
 seven days before trying again.
+
+## Hermes Agent
+
+The `hermes` source reads Hermes Agent's `state.db`: the default profile's in the Hermes home and
+each other profile's in `profiles/<name>/`. The home is `HERMES_HOME`, else `~/.hermes`
+(`%LOCALAPPDATA%\hermes` on Windows); a `HERMES_HOME` that names a profile reads the whole tree.
+`[sources.hermes] roots` replaces the default homes and may name a database file.
+
+**Growth, not requests.** Hermes keeps running totals per session, model, billing route and task
+(its auxiliary calls such as titles and compression are counted too), not a row per request. Each
+push compares them with the totals it saw last (kept in the reporter's state database) and counts
+the growth on the UTC day Hermes last saw the usage (never later than the push). Pushing again,
+or reading a copy of a database, counts nothing twice. A session that runs past midnight UTC can
+land up to one push interval late on the earlier day. A first push counts each session's whole
+history on the day of its last use. Totals that went down (a repair) count their current values.
+`show-payload` and `push --dry-run` work on a copy of the state, so they show what a push would
+send.
+
+**Sessions.** Subagent, branch, compression and reset children are followed to their root session
+and counted there; `push --session <child id>` selects the root. `parent_session_id` is therefore
+never sent by this source.
+
+**Route and provider.** `route` is Hermes's billing provider as it is (`openrouter`, `nous`,
+`openai-codex`, `anthropic`, `custom`). `provider` is the model's maker, which Specivo prices by:
+through a gateway (`openrouter`, `litellm`) the model id's prefix (`anthropic/claude-sonnet-4.6`
+gives `anthropic`; Specivo matches `4.6` and `4-6`), `openai-codex` gives `openai`, `nous` stays
+`nous`, and a local engine (`ollama`, `vllm` and the like) or an endpoint on this machine or a
+private network gives `local`.
+
+**Cost type.** Usage Hermes marks `subscription_included` (the Codex and Portal subscriptions) is
+sent as `cost_type = subscription`, local engines as `local`; otherwise Specivo decides. A
+`[[cost_rules]]` entry wins over both.
+
+**Profile and unattended.** `profile` is the root session's Hermes profile (`default` for the home
+itself). A root session Hermes started from cron is sent as `unattended`.
+
+**Schema changes.** Hermes changes its database often. Every read checks `schema_version` and the
+columns it uses. A database older than schema 20, or one missing a column the reporter needs, is
+skipped with the message `Hermes schema changed, update the reporter` in `push` and `doctor`, and
+the other sources go on. A schema newer than the one the reporter was tested with (33) is read by
+its columns, with a note. Optional columns degrade: without `profile_name` the profile comes from
+the directory, without readable tool calls there are no issue marks.
+
+**When to push.** `ai-usage schedule install` pushes every 30 minutes, which also covers cron runs
+and gateways with nobody at a terminal. To push when an interactive session ends as well, add a
+shell hook to Hermes's `config.yaml` (Hermes asks you to approve it the first time):
+
+```yaml
+hooks:
+  on_session_end:
+    - command: ai-usage push --source hermes
+      timeout: 60
+```
+
+**Docker and other hosts.** Run the reporter where it can read the Hermes data directory: on the
+host, with the container's data directory bind-mounted read-only, and
+`[sources.hermes] roots = ["/opt/data"]` (the mount point); or inside a remote host's own
+environment (the reporter needs only Python 3.11, no packages). Reading a copy of `state.db` taken
+from another host also works, but each copy is read as it was when it was taken.
 
 ## Days are UTC
 
@@ -309,7 +373,8 @@ cost_type = "api"
 Without a rule, Specivo uses `subscription` when you have an AI subscription covering the tool,
 and `unknown` otherwise.
 
-When a tool logs what each request cost (OpenCode does, in US dollars), the bucket's sum is sent
+When a tool logs what each request cost (OpenCode does, and Hermes for OpenRouter, in US dollars;
+Hermes's own estimates are never sent), the bucket's sum is sent
 as `reported_cost`, but only when every request of the bucket has a cost and the sum is above
 zero. Specivo uses it as the spend of `api` usage and keeps it for the others.
 
@@ -398,6 +463,9 @@ your repositories in `[projects]` to get the precise reasons.
 | `push` exits with status 1 | Some records are waiting for a retry (server busy or offline); the next push sends them |
 | Codex rollouts are skipped | Install the `zstd` extra |
 | `doctor` says an OpenCode database is busy | OpenCode was writing; the next push reads it |
+| `Hermes schema changed, update the reporter` | Hermes changed `state.db` in a way this reporter cannot read; that database is skipped until you update the reporter (the other sources go on) |
+| `Hermes state.db schema vN is newer than ...` | A note only: the database is read by its columns. Update the reporter when a release covers that schema |
+| `Hermes usage counters went down` | Hermes repaired or reset a session's totals; their current values were counted as new usage |
 | A hook does not seem to run | Look at `hooks.log` in the state directory; run `ai-usage hooks install --tool <tool>` again after moving the reporter |
 
 ## Writing an adapter

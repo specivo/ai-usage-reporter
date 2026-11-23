@@ -40,7 +40,17 @@ jobs:
       - run: /tmp/clean/bin/python -c "import ai_usage_reporter.cli, ai_usage_reporter.testing"
       - run: >-
           /tmp/clean/bin/python -c "import ai_usage_reporter.hooks.runner, ai_usage_reporter.schedule,
-          ai_usage_reporter.importers.ccusage, ai_usage_reporter.adapters.opencode, ai_usage_reporter.adapters.gemini_cli"
+          ai_usage_reporter.importers.ccusage, ai_usage_reporter.adapters.opencode, ai_usage_reporter.adapters.gemini_cli,
+          ai_usage_reporter.adapters.hermes"
+
+  # The columns the hermes source reads are still in the pinned Hermes Agent release's state.db DDL.
+  hermes-schema:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked
+      - run: make hermes-schema-check
 
   # Install and remove a real schedule. Task Scheduler works on the Windows runner; launchd and a
   # systemd user session may be missing on hosted runners, so those two only report.
