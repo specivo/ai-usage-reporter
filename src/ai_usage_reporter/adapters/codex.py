@@ -8,8 +8,16 @@ What the rollout format looks like, and what this adapter does with it:
   ``archived_sessions/``; when both hold the same session, the active copy is
   read, a plain copy before a compressed one, the newest first.
 - ``session_meta`` opens the file: the session ``id``, ``cwd``,
-  ``cli_version`` and, inside a git checkout, ``git.branch`` and
-  ``git.repository_url``.
+  ``cli_version``, ``model_provider`` and, inside a git checkout,
+  ``git.branch`` and ``git.repository_url``.
+- **Route and provider.** ``model_provider`` is the provider profile the
+  session ran on (``openai`` for the ChatGPT login or an OpenAI key, or the id
+  of a ``[model_providers.<id>]`` entry in ``config.toml``, such as a company
+  gateway). It is sent as ``route``. ``provider`` stays ``openai`` for OpenAI's
+  models (``gpt-*``, ``o*``, ``codex-*``) so the server can price them; a local
+  engine (``ollama``, ``lmstudio``) gives ``local``, paid as ``local``; any
+  other model is priced by the maker the route or the model id names, or by
+  its name alone (see :mod:`ai_usage_reporter.adapters._routes`).
 - ``turn_context`` starts each turn and names the ``model`` in use (and the
   ``cwd``); usage that follows belongs to that model.
 - ``event_msg`` lines of ``payload.type`` ``token_count`` report usage:
@@ -41,10 +49,13 @@ from pathlib import Path
 
 from ai_usage_reporter.adapters import DiscoveryContext, HookSpec
 from ai_usage_reporter.adapters._jsonl import get_dict, get_str, iter_json_lines, zstd_available
+from ai_usage_reporter.adapters._routes import is_local, maker_of
 from ai_usage_reporter.issue_marks import CREATE, created_issue, marking_call
 from ai_usage_reporter.model import SourceFile, TokenCounts, UsageEvent, count, parse_timestamp
 
 _UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
+#: OpenAI's own model names: priced as ``openai`` whatever profile served them.
+_OPENAI_MODEL = re.compile(r"^(?:openai/)?(?:gpt-|chatgpt-|codex-|o\d)", re.IGNORECASE)
 _RAW_KEYS = ("input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens")
 
 Raw = tuple[int, int, int, int]
@@ -69,6 +80,16 @@ def _normalise(raw: Raw) -> TokenCounts:
     )
 
 
+def resolve_provider(route: str | None, model: str | None) -> tuple[str | None, str | None]:
+    """The provider to send for *model* run through the ``model_provider`` *route*, and the cost type it implies."""
+    if is_local(route):
+        return "local", "local"
+    if route is None or model is None or _OPENAI_MODEL.match(model):
+        # Rollouts without model_provider come from the OpenAI-only releases.
+        return "openai", None
+    return maker_of(route, model), None
+
+
 def codex_homes(ctx: DiscoveryContext) -> list[Path]:
     if ctx.roots:
         homes = [p.parent if p.name in ("sessions", "archived_sessions") else p for p in ctx.roots]
@@ -86,7 +107,7 @@ def codex_homes(ctx: DiscoveryContext) -> list[Path]:
 class CodexAdapter:
     name = "codex"
     provider = "openai"
-    parser_version = "codex/2"
+    parser_version = "codex/3"
 
     def discover(self, ctx: DiscoveryContext) -> Iterable[SourceFile]:
         can_decompress = zstd_available()
@@ -121,6 +142,7 @@ class CodexAdapter:
         version: str | None = None
         branch: str | None = None
         repo_url: str | None = None
+        route: str | None = None
         running: Raw | None = None
         #: Calls already marked, and specivo_create_issue calls waiting for their result.
         marked: set[str] = set()
@@ -147,6 +169,7 @@ class CodexAdapter:
                 session = (get_str(payload, "id") or session).lower()
                 cwd = get_str(payload, "cwd") or cwd
                 version = get_str(payload, "cli_version") or version
+                route = get_str(payload, "model_provider") or route
                 git = get_dict(payload, "git")
                 branch = get_str(git, "branch") or branch
                 repo_url = get_str(git, "repository_url") or repo_url
@@ -184,6 +207,7 @@ class CodexAdapter:
                 src.stats.skipped_events += 1
                 continue
             snapshot = total if total is not None else used
+            provider, cost_type = resolve_provider(route, model)
             src.stats.events += 1
             yield UsageEvent(
                 tool=self.name,
@@ -191,7 +215,9 @@ class CodexAdapter:
                 model=model or "unknown",
                 timestamp=when,
                 tokens=tokens,
-                provider=self.provider,
+                provider=provider,
+                route=route,
+                cost_type=cost_type,
                 tool_version=version,
                 message_id=f"{when.isoformat()}|{','.join(map(str, snapshot))}",
                 git_branch=branch if branch and branch != "HEAD" else None,

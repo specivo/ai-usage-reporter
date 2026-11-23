@@ -9,6 +9,7 @@
       "currency": "USD"
     },
     "request_count": 1,
+    "route": "anthropic",
     "session_id": "ses_0009legacyddddddddddddd",
     "started_at": "2026-10-03T12:00:10Z",
     "tokens": {
@@ -31,6 +32,7 @@
       "currency": "USD"
     },
     "request_count": 3,
+    "route": "anthropic",
     "session_id": "ses_0001rootaaaaaaaaaaaaaaaa",
     "started_at": "2026-10-05T10:00:05Z",
     "tokens": {
@@ -50,6 +52,7 @@
     "model": "gpt-5",
     "provider": "openai",
     "request_count": 1,
+    "route": "openai",
     "session_id": "ses_0003othercccccccccccccc",
     "started_at": "2026-10-05T23:59:59Z",
     "tokens": {
@@ -72,6 +75,7 @@
       "currency": "USD"
     },
     "request_count": 1,
+    "route": "openai",
     "session_id": "ses_0003othercccccccccccccc",
     "started_at": "2026-10-06T00:00:05Z",
     "tokens": {

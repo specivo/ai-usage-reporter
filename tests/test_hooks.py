@@ -41,12 +41,12 @@ USER_SETTINGS = {
 @pytest.mark.parametrize(
     ("tool", "settings", "events", "timeout"),
     [
-        ("claude-code", Path(".claude/settings.json"), ("SessionEnd", "Stop"), 10),
+        ("claude-code", Path(".claude/settings.json"), ("SessionStart", "SessionEnd", "Stop"), 10),
         ("gemini-cli", Path(".gemini/settings.json"), ("SessionEnd", "AfterAgent"), 10_000),
     ],
 )
 def test_settings_hooks_install_idempotently_and_keep_user_hooks(
-    tmp_path: Path, tool: str, settings: Path, events: tuple[str, str], timeout: int
+    tmp_path: Path, tool: str, settings: Path, events: tuple[str, ...], timeout: int
 ) -> None:
     path = tmp_path / settings
     path.parent.mkdir(parents=True)

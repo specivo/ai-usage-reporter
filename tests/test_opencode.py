@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from ai_usage_reporter.adapters.opencode import OpenCodeAdapter
 from ai_usage_reporter.config import Config, SourceSettings
 from ai_usage_reporter.model import SourceBusyError, UsageEvent
 from ai_usage_reporter.pipeline import Collected, Selection, collect
+from ai_usage_reporter.record import idempotency_key
 from ai_usage_reporter.state import State
 from tests.fixtures.opencode_home import CHILD, ROOT, assistant, build, ms
 
@@ -182,3 +184,53 @@ def test_disabled_or_imported_tool_is_not_read(tmp_path: Path) -> None:
             config, registry, context_for=lambda a, roots: DiscoveryContext(home=tmp_path, env={}, roots=roots)
         )
         assert collected.records == []
+
+
+def _routed_database(path: Path, messages: list[tuple[str, str]]) -> None:
+    """One OpenCode 1 session with a message per (model id, providerID)."""
+    db = sqlite3.connect(path)
+    db.executescript(
+        "CREATE TABLE session (id text PRIMARY KEY, parent_id text, directory text, version text);"
+        "CREATE TABLE message (id text PRIMARY KEY, session_id text, time_created integer, data text);"
+    )
+    db.execute("INSERT INTO session VALUES ('ses_route', NULL, '/w', '1.0.0')")
+    for number, (model, provider) in enumerate(messages):
+        data = assistant(f"2026-10-02T08:0{number}:00", model, provider, (10, 5, 0, 0, 0), None)
+        data["role"] = "assistant"
+        db.execute("INSERT INTO message VALUES (?, 'ses_route', 0, ?)", (f"msg_r{number}", json.dumps(data)))
+    db.commit()
+    db.close()
+
+
+@pytest.mark.parametrize(
+    ("model", "provider_id", "provider"),
+    [
+        # A maker's own API: the maker, under the name Specivo uses.
+        ("claude-sonnet-4-5", "anthropic", "anthropic"),
+        ("glm-4.6", "zhipuai", "zai"),
+        ("kimi-k2", "moonshotai", "moonshot"),
+        # A gateway: the maker the model id names, or none.
+        ("anthropic/claude-sonnet-4.5", "openrouter", "anthropic"),
+        ("some-model", "openrouter", None),
+        # A bundle or a custom provider is not a maker: Specivo prices by model name.
+        ("claude-sonnet-4-5", "github-copilot", None),
+        ("glm-4.6", "zhipuai-coding-plan", None),
+        ("gpt-5", "corp-proxy", None),
+    ],
+)
+def test_provider_id_is_the_route(tmp_path: Path, model: str, provider_id: str, provider: str | None) -> None:
+    data = tmp_path / ".local" / "share" / "opencode"
+    data.mkdir(parents=True)
+    _routed_database(data / "opencode.db", [(model, provider_id)])
+    [event] = _events(tmp_path)
+    assert (event.route, event.provider) == (provider_id, provider)
+
+
+def test_route_is_sent_and_the_key_leaves_the_provider_out(tmp_path: Path) -> None:
+    data = tmp_path / ".local" / "share" / "opencode"
+    data.mkdir(parents=True)
+    _routed_database(data / "opencode.db", [("claude-sonnet-4-5", "corp-proxy")])
+    [record] = [r.to_wire() for r in _collect(tmp_path).records]
+    assert (record["route"], record.get("provider")) == ("corp-proxy", None)
+    # The key is the contract's: the provider no longer sent changes the payload, not the key.
+    assert record["idempotency_key"] == idempotency_key("opencode", "ses_route", "claude-sonnet-4-5", date(2026, 10, 2))

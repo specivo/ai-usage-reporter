@@ -83,7 +83,7 @@ ai-usage hooks uninstall --tool claude-code
 
 | Tool | What is installed | When it pushes |
 |---|---|---|
-| Claude Code | a command hook in `~/.claude/settings.json` | `SessionEnd`, and 30 s after the last `Stop` |
+| Claude Code | a command hook in `~/.claude/settings.json` | `SessionEnd`, and 30 s after the last `Stop` (`SessionStart` only records the route) |
 | Codex CLI | the `notify` program in `~/.codex/config.toml` (an existing one keeps running) | 30 s after the last turn |
 | Gemini CLI | a command hook in `~/.gemini/settings.json` | `SessionEnd`, and 30 s after the last `AfterAgent` |
 | OpenCode | a plugin file in `~/.config/opencode/plugins/` | 20 s after the session goes idle |
@@ -165,7 +165,12 @@ that runs past midnight UTC, or switches models, becomes several records. Each r
 - cost hints from your config (`cost_type`, `subscription_hint`) and `on_behalf_of` for service
   accounts.
 - when a source knows them, the `route` (the backend the requests went through, such as a gateway
-  host) and the `billing_account` that paid; both go only to a server that lists them in its
+  host; for Codex the session's `model_provider`, while `provider` stays `openai` for OpenAI's
+  models; for OpenCode its `providerID`, while `provider` is sent only for a known model maker so
+  gateway and bundle usage is priced by model name; for Claude Code the host of
+  `ANTHROPIC_BASE_URL`, recorded by the `SessionStart` hook or read from the `env` of its
+  settings files, else `claude.ai:org-<hash>` for a claude.ai login, never the organization id)
+  and the `billing_account` that paid; both go only to a server that lists them in its
   `optional_fields` (Specivo 0.15.0 or later), older servers get the record without them.
 - when a source knows them, the session's place in the agent's work: its parent session (as an
   opaque id like the session id), whether it was an unattended run (cron, scheduled) and the agent
@@ -195,6 +200,9 @@ Codex, OpenCode 2 and Hermes transcripts show the calls; `agent_log_issues = fal
 - `git` (for repository and commit hints) runs read-only, only in directories you own, with the
   programs a repository can configure (fsmonitor, hooks, GPG, external diff, pager) switched off.
   `git_enrichment = false` or `push --no-git` turns it off.
+- For the Claude Code route, only the host of `ANTHROPIC_BASE_URL` is read from Claude Code's
+  settings files and hook environment (those hold API tokens; nothing else is kept), and the
+  claude.ai organization id is sent only as an 8-digit hash.
 - The local state database (in your user state directory) keeps file paths, to know which logs
   changed, and the records it sent. It never leaves your machine.
 - The test suite plants canary strings in prompts, tool output, paths and git credentials of the

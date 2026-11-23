@@ -273,6 +273,7 @@ def codex() -> None:
         "cwd": cwd,
         "originator": "codex_cli_rs",
         "cli_version": "0.50.0",
+        "model_provider": "openai",
         "instructions": f"Project notes {CANARY_PROMPT}",
         "git": {
             "commit_hash": "0123456789abcdef0123456789abcdef01234567",

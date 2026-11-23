@@ -1,11 +1,12 @@
-"""Claude Code: a command hook on ``SessionEnd`` and ``Stop`` in ``settings.json``.
+"""Claude Code: a command hook on ``SessionStart``, ``SessionEnd`` and ``Stop`` in ``settings.json``.
 
 The file is ``$CLAUDE_CONFIG_DIR/settings.json``, by default
 ``~/.claude/settings.json``. Claude Code passes the hook a JSON object on
 standard input with ``session_id``, ``transcript_path``, ``cwd`` and
 ``hook_event_name``; the hook reads only the session id and the event. The
 timeout is in seconds. ``SPECIVO_ISSUE`` set in the environment Claude Code
-runs in reaches the push.
+runs in reaches the push. ``SessionStart`` pushes nothing: it records the host
+of ``ANTHROPIC_BASE_URL`` (the session's route) in the state database.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from pathlib import Path
 from ai_usage_reporter.hooks import Change, HookContext, json_hook_edit
 
 TOOL = "claude-code"
-EVENTS = ("SessionEnd", "Stop")
+EVENTS = ("SessionStart", "SessionEnd", "Stop")
 TIMEOUT_SECONDS = 10
 
 

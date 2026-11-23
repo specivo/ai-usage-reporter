@@ -21,20 +21,31 @@ directory; it holds counts and statuses, never content.
 
 Nothing the tool passes is kept or logged except the session id: hook
 payloads also carry prompts and responses, which are read past and dropped.
+
+**Claude Code route.** Claude Code does not log which endpoint it called. Every
+Claude Code hook call records the host of ``ANTHROPIC_BASE_URL`` from its
+environment (``''`` when unset) for the session in the state database: a
+``SessionStart`` call records it and pushes nothing, a later call records it
+only when the session has no entry yet. Only the host is kept, never the URL
+or anything else from the environment.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import secrets
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, TextIO
+
+from ai_usage_reporter.adapters._routes import url_host
+from ai_usage_reporter.state import STATE_FILE, record_session_route
 
 #: How long a turn event waits for more turns of the same session.
 DEBOUNCE_SECONDS = 30
@@ -44,6 +55,12 @@ MAX_PAYLOAD_BYTES = 1024 * 1024
 MAX_LOG_BYTES = 512 * 1024
 #: Events that end a session: push without waiting.
 FINAL_EVENTS = frozenset({"SessionEnd"})
+#: Events that only record the session's route and push nothing.
+START_EVENTS = frozenset({"SessionStart"})
+#: How long a hook waits for a push that holds the state database.
+ROUTE_LOCK_SECONDS = 1.0
+#: The environment variable that sends Claude Code to another endpoint (a gateway).
+BASE_URL_ENV = "ANTHROPIC_BASE_URL"
 
 SESSION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 STDIN_TOOLS = ("claude-code", "gemini-cli")
@@ -115,6 +132,7 @@ def run_hook(
     command: Sequence[str],
     state: Path,
     spawn: Spawn = spawn_detached,
+    env: Mapping[str, str] | None = None,
 ) -> int:
     """Handle one hook call. Always returns 0."""
     log = state / "hooks.log"
@@ -140,6 +158,10 @@ def run_hook(
                 pass
         if not session or not SESSION_ID.match(session):
             return 0
+        if tool == "claude-code":
+            _record_route(state, session, os.environ if env is None else env, replace=event in START_EVENTS)
+        if event in START_EVENTS:
+            return 0
         delay = 0 if event in FINAL_EVENTS else DEBOUNCE_SECONDS
         nonce = secrets.token_hex(8)
         stamp = stamp_path(state, tool, session)
@@ -150,6 +172,17 @@ def run_hook(
     except Exception:
         pass
     return 0
+
+
+def _record_route(state: Path, session: str, env: Mapping[str, str], *, replace: bool) -> None:
+    """Record the host of the session's ``ANTHROPIC_BASE_URL`` (see the module docs); never raises."""
+    try:
+        host = url_host(env.get(BASE_URL_ENV)) or ""
+        record_session_route(
+            state / STATE_FILE, "claude-code", session, host[:100], replace=replace, timeout=ROUTE_LOCK_SECONDS
+        )
+    except Exception:
+        pass
 
 
 def run_hook_push(

@@ -48,10 +48,9 @@ from ai_usage_reporter.schedule import KINDS, ScheduleContext, ScheduleError, de
 from ai_usage_reporter.sinks import Sink, SinkContext, make_batch, plugin_sinks
 from ai_usage_reporter.sinks.json_sink import JsonSink
 from ai_usage_reporter.sinks.specivo import SinkError, SpecivoSink
-from ai_usage_reporter.state import CONFLICT, PENDING, REJECTED, State
+from ai_usage_reporter.state import CONFLICT, PENDING, REJECTED, STATE_FILE, State
 
 ISSUE_ENV = "SPECIVO_ISSUE"
-STATE_FILE = "state.db"
 _ISSUE = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,127}-[1-9][0-9]{0,8}$")
 
 
