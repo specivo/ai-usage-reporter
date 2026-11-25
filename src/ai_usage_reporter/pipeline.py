@@ -423,6 +423,70 @@ def _remember_agent_log_refused(sink: Sink, state: State, now: datetime) -> None
     state.set_meta(AGENT_LOG_META, json.dumps(memo))
 
 
+#: State meta key: the optional record fields the server accepted at the last push.
+ACCEPTED_FIELDS_META = "accepted_optional_fields"
+
+
+def gate_like_last_push(wires: Sequence[dict[str, Any]], state: State) -> list[dict[str, Any]]:
+    """*wires* without the optional fields the server did not accept at the last push (all kept before one)."""
+    raw = state.meta(ACCEPTED_FIELDS_META)
+    if not raw:
+        return list(wires)
+    try:
+        fields = frozenset(json.loads(raw))
+    except (ValueError, TypeError):
+        return list(wires)
+    return [gate_optional_fields(w, fields) for w in wires]
+
+
+def select_to_send(
+    wires: Sequence[dict[str, Any]],
+    ledger: State,
+    summary: DeliverySummary,
+    *,
+    built: Mapping[str, str] | None = None,
+    upgrade: bool = False,
+    retry_rejected: bool = False,
+    include_queue: bool = True,
+    queue_tools: Sequence[str] = (),
+) -> list[dict[str, Any]]:
+    """The records a push sends: new or changed ones, then the queue; counts what it skips in *summary*.
+
+    A record whose bucket was sent (or conflicted) with the same payload is
+    unchanged; one the server refused for good is skipped unless
+    *retry_rejected*. With *include_queue*, records waiting in the queue (of
+    *queue_tools*, when given) follow. *built* maps a key to the hash of the
+    record as built, when what is sent is a reduced copy; with *upgrade*, a
+    record carrying an agent_log issue goes again when the sent copy had none.
+    ``show-payload`` and ``push --dry-run`` call this on a scratch copy of the
+    state, so they show what a push would send.
+    """
+    built = built or {}
+    to_send: list[dict[str, Any]] = []
+    current = set()
+    for wire in wires:
+        key = wire["idempotency_key"]
+        current.add(key)
+        row = ledger.bucket(key)
+        same = row is not None and row.payload_hash in (payload_hash(wire), built.get(key))
+        if same and row is not None and upgrade and has_agent_log_issue(wire):
+            same = has_agent_log_issue(row.payload)
+        if row is not None and same and row.status in (SENT, CONFLICT):
+            summary.skipped_unchanged += 1
+            continue
+        if row is not None and row.status == REJECTED and not retry_rejected:
+            summary.skipped_final += 1
+            continue
+        to_send.append(wire)
+    if include_queue:
+        for row in ledger.buckets(STATE_PENDING):
+            if row.idempotency_key in current or (queue_tools and row.tool not in queue_tools):
+                continue
+            to_send.append(row.payload)
+            summary.retried_from_queue += 1
+    return to_send
+
+
 def deliver(
     records: Sequence[ContractRecord],
     sink: Sink,
@@ -439,6 +503,9 @@ def deliver(
         # Before hashing: a bucket sent without them goes again once the server lists them.
         fields = accepted()
         wires = [gate_optional_fields(w, fields) for w in wires]
+        if state is not None and sink.records_state:
+            # So that show-payload and push --dry-run, which stay offline, gate the same way.
+            state.set_meta(ACCEPTED_FIELDS_META, json.dumps(sorted(fields)))
     ledger = state if (state is not None and sink.records_state) else None
     now = datetime.now(UTC)
     #: The hash of each record as built, when what is sent differs from it.
@@ -448,35 +515,21 @@ def deliver(
         summary.agent_log_left_out = sum(1 for w in wires if has_agent_log_issue(w))
         built = {w["idempotency_key"]: payload_hash(w) for w in wires if has_agent_log_issue(w)}
         wires = [strip_agent_log(w) for w in wires]
-    to_send: list[dict[str, Any]] = []
     if ledger is None:
         to_send = wires
     else:
-        current = set()
         # A record sent without its agent_log issue (to a server that did not take them) goes again
         # with the issue once the server says it takes them, even if the bucket did not change.
-        upgrade = not built and _agent_log_supported(sink)
-        for wire in wires:
-            key = wire["idempotency_key"]
-            current.add(key)
-            row = ledger.bucket(key)
-            digest = payload_hash(wire)
-            same = row is not None and row.payload_hash in (digest, built.get(key))
-            if same and row is not None and upgrade and has_agent_log_issue(wire):
-                same = has_agent_log_issue(row.payload)
-            if row is not None and same and row.status in (SENT, CONFLICT):
-                summary.skipped_unchanged += 1
-                continue
-            if row is not None and row.status == REJECTED and not retry_rejected:
-                summary.skipped_final += 1
-                continue
-            to_send.append(wire)
-        if include_queue:
-            for row in ledger.buckets(STATE_PENDING):
-                if row.idempotency_key in current or (queue_tools and row.tool not in queue_tools):
-                    continue
-                to_send.append(row.payload)
-                summary.retried_from_queue += 1
+        to_send = select_to_send(
+            wires,
+            ledger,
+            summary,
+            built=built,
+            upgrade=not built and _agent_log_supported(sink),
+            retry_rejected=retry_rejected,
+            include_queue=include_queue,
+            queue_tools=queue_tools,
+        )
     summary.sent = len(to_send)
     outcomes = sink.send(to_send) if to_send else []
     fallback: list[dict[str, Any]] = []

@@ -6,7 +6,8 @@
 
 Nothing printed here contains a prompt, tool output, a transcript path or a
 working directory. ``show-payload`` and ``push --dry-run`` print exactly the
-records that would be sent.
+records a push would send now (new or changed since the last push, then the
+queue); with ``--all``, every collected record.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ import sys
 from collections.abc import Sequence
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
 from ai_usage_reporter import CONTRACT_VERSION, __version__
 from ai_usage_reporter import schedule as schedules
@@ -43,7 +44,16 @@ from ai_usage_reporter.hooks import install as install_hook
 from ai_usage_reporter.hooks import uninstall as uninstall_hook
 from ai_usage_reporter.hooks.runner import run_hook, run_hook_push
 from ai_usage_reporter.importers.ccusage import CcusageFormatError, import_report
-from ai_usage_reporter.pipeline import Collected, Selection, collect, deliver, native_sources
+from ai_usage_reporter.pipeline import (
+    Collected,
+    DeliverySummary,
+    Selection,
+    collect,
+    deliver,
+    gate_like_last_push,
+    native_sources,
+    select_to_send,
+)
 from ai_usage_reporter.schedule import KINDS, ScheduleContext, ScheduleError, default_kind
 from ai_usage_reporter.sinks import Sink, SinkContext, make_batch, plugin_sinks
 from ai_usage_reporter.sinks.json_sink import JsonSink
@@ -238,9 +248,11 @@ def cmd_push(args: argparse.Namespace) -> int:
             collected = collect(
                 config, load_adapters(), selection=selection, state=scratch, git=git, session_issues=hints
             )
+            wires, preview = _would_send(collected, scratch, selection, everything=args.all)
         sink = _make_sink(args, config, cfg_path)
-        sink.send([r.to_wire() for r in collected.records])
+        sink.send(wires)
         _print_collection(collected, sys.stderr)
+        _print_preview(preview, everything=args.all)
         return 0
     sink = _make_sink(args, config, cfg_path)
     with State(state_path) as state:
@@ -303,11 +315,42 @@ def cmd_show_payload(args: argparse.Namespace) -> int:
     git = _git(args, config)
     with State.scratch_copy(state_path) as scratch:
         collected = collect(config, load_adapters(), selection=selection, state=scratch, git=git, session_issues=hints)
-    wires = [r.to_wire() for r in collected.records]
+        wires, preview = _would_send(collected, scratch, selection, everything=args.all)
     batches = [wires[i : i + 500] for i in range(0, len(wires), 500)] or [[]]
     for batch in batches:
         print(json.dumps(make_batch(batch), indent=2, ensure_ascii=False))
+    _print_preview(preview, everything=args.all)
     return 0
+
+
+def _would_send(
+    collected: Collected, state: State, selection: Selection, *, everything: bool
+) -> tuple[list[dict[str, Any]], DeliverySummary]:
+    """The records a push would send now (``select_to_send`` on *state*), or every collected one."""
+    wires = [r.to_wire() for r in collected.records]
+    summary = DeliverySummary(records=len(wires))
+    if not everything:
+        wires = select_to_send(
+            gate_like_last_push(wires, state),
+            state,
+            summary,
+            include_queue=selection.session is None,
+            queue_tools=selection.sources,
+        )
+    summary.sent = len(wires)
+    return wires, summary
+
+
+def _print_preview(summary: DeliverySummary, *, everything: bool) -> None:
+    if everything:
+        print(f"{summary.sent} records collected (--all: including those a push would skip)", file=sys.stderr)
+        return
+    print(
+        f"{summary.sent} records would be sent ({summary.retried_from_queue} from the queue);"
+        f" {summary.skipped_unchanged} unchanged since the last push, {summary.skipped_final} refused earlier"
+        " (--all shows every collected record)",
+        file=sys.stderr,
+    )
 
 
 def _local_time(value: str | None, config: Config) -> str:
@@ -412,7 +455,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     imported = sorted(n for n, s in config.sources.items() if s.via == "ccusage")
     if imported:
         print(f"read through 'ai-usage import ccusage' instead of their logs: {', '.join(imported)}")
-    print(f"records that would be sent: {len(collected.records)}")
+    line = f"records collected: {len(collected.records)}"
+    if state_path.exists():
+        with State.scratch_copy(state_path) as scratch:
+            _wires, preview = _would_send(collected, scratch, Selection(), everything=False)
+        line += (
+            f"; a push would send {preview.sent} ({preview.skipped_unchanged} unchanged since the last push,"
+            f" {preview.skipped_final} refused earlier, {preview.retried_from_queue} from the queue)"
+        )
+    print(line)
     if config.url and key is not None and not args.offline:
         try:
             info = SpecivoSink(config.url, key.value, allow_insecure_http=config.allow_insecure_http).info()
@@ -601,7 +652,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     push = sub.add_parser("push", help="send new and changed usage")
     _selection_args(push)
-    push.add_argument("--dry-run", action="store_true", help="print the records instead of sending; change nothing")
+    push.add_argument(
+        "--dry-run", action="store_true", help="print the records a push would send instead of sending; change nothing"
+    )
+    push.add_argument("--all", action="store_true", help="with --dry-run: every collected record")
     push.add_argument("--sink", default="specivo", help="specivo (default), json or a plugin sink")
     push.add_argument("--output", help="file for the json sink (default: standard output)")
     push.add_argument("--retry-rejected", action="store_true", help="send records the server refused before again")
@@ -614,8 +668,9 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--offline", action="store_true", help="do not contact the server")
     doctor.set_defaults(func=cmd_doctor)
 
-    show = sub.add_parser("show-payload", help="print exactly what would be sent")
+    show = sub.add_parser("show-payload", help="print exactly what a push would send now")
     _selection_args(show)
+    show.add_argument("--all", action="store_true", help="every collected record, also those a push would skip")
     show.set_defaults(func=cmd_show_payload)
 
     imports = sub.add_parser("import", help="import usage reported by another program")
