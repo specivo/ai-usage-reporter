@@ -92,7 +92,7 @@ uv tool install "specivo-ai-usage-reporter[keyring,zstd] @ git+https://github.co
 ## Send usage
 
 ```bash
-ai-usage show-payload     # print exactly what would be sent; nothing is sent
+ai-usage show-payload     # print exactly what a push would send now; nothing is sent (--all: every record)
 ai-usage push             # send new and changed usage
 ai-usage status           # what was sent, what waits for a retry, what was refused
 ```
@@ -106,7 +106,7 @@ it never adds them up.
 | `--source NAME` | Only `claude-code`, `codex`, `gemini-cli`, `opencode` or `hermes` (repeatable) |
 | `--session ID` | Only this session (a subagent's session id selects its parent session) |
 | `--since YYYY-MM-DD` | Only UTC days on or after this date |
-| `--dry-run` | Print the records instead of sending them; nothing is written locally either |
+| `--dry-run` | Print the records a push would send (new or changed since the last push, then the queue) instead of sending them; nothing is written locally either. Add `--all` for every collected record |
 | `--sink json --output FILE` | Write the batch to a file |
 | `--retry-rejected` | Send records again that the server refused before |
 | `--no-git` | Do not ask `git` for repository and commit hints |
@@ -338,7 +338,9 @@ or reading a copy of a database, counts nothing twice. A session that runs past 
 land up to one push interval late on the earlier day. A first push counts each session's whole
 history on the day of its last use. Totals that went down (a repair) count their current values.
 `show-payload` and `push --dry-run` work on a copy of the state, so they show what a push would
-send.
+send: records unchanged since the last push and records the server refused for good are left out
+(stderr says how many), and the optional fields the server did not accept at the last push are
+dropped as a push drops them. `--all` prints every collected record.
 
 **Sessions.** Subagent, branch, compression and reset children are followed to their root session
 and counted there; `push --session <child id>` selects the root. `parent_session_id` is therefore
@@ -490,7 +492,7 @@ your repositories in `[projects]` to get the precise reasons.
 - **Never sent, printed or logged:** prompts, responses, code, tool input and output, file paths,
   working directories, file names, remote URLs with credentials.
 - The record sent is built from an allowlist and checked field by field against the contract.
-- `ai-usage show-payload` and `push --dry-run` show exactly what would be sent.
+- `ai-usage show-payload` and `push --dry-run` show exactly what a push would send now.
 - The local state database keeps the paths of the log files it read, to skip unchanged ones, and
   the records it sent. It stays on your machine.
 - `exclude_paths` in the config keeps sessions that ran in those directories out entirely.

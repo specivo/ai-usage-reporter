@@ -51,7 +51,7 @@ uv tool install "specivo-ai-usage-reporter[keyring,zstd] @ git+https://github.co
 3. Look at what would be sent, then send it:
 
    ```bash
-   ai-usage show-payload          # the exact JSON, nothing is sent
+   ai-usage show-payload          # the exact JSON a push would send now; nothing is sent
    ai-usage push                  # send new and changed usage
    ai-usage status                # what was sent, what waits for a retry, what was refused
    ai-usage doctor                # sources found, malformed lines, the server, last results
@@ -64,7 +64,7 @@ uv tool install "specivo-ai-usage-reporter[keyring,zstd] @ git+https://github.co
 | `--source claude-code` | Only this source (repeatable): `claude-code`, `codex`, `gemini-cli`, `opencode`, `hermes` |
 | `--session ID` | Only this session. With `SPECIVO_ISSUE=ACME-12` set, the session is attributed to that issue, now and in later pushes |
 | `--since 2026-10-01` | Only UTC days on or after this date |
-| `--dry-run` | Print the records instead of sending them; nothing is written |
+| `--dry-run` | Print the records a push would send (new or changed since the last push, then the queue) instead of sending them; nothing is written. Add `--all` for every collected record |
 | `--sink json --output usage.json` | Write the batch to a file instead of sending it |
 | `--retry-rejected` | Send records again that the server refused before |
 | `--no-git` | Do not run `git` for repository and commit hints |
@@ -194,7 +194,7 @@ Codex, OpenCode 2 and Hermes transcripts show the calls; `agent_log_issues = fal
 - The record that goes on the wire is a separate type with exactly the contract's fields. It is
   built from an allowlist, field by field, and every value is checked against the contract's
   format; anything that does not fit is left out.
-- `ai-usage show-payload` and `ai-usage push --dry-run` show exactly what would be sent.
+- `ai-usage show-payload` and `ai-usage push --dry-run` show exactly what a push would send now, and say on stderr how many records they skip as unchanged or refused earlier; `--all` shows every collected record.
 - The API key only travels over `https://` (plain `http://` only to this machine, unless you set
   `allow_insecure_http = true`), and redirects are never followed.
 - `git` (for repository and commit hints) runs read-only, only in directories you own, with the

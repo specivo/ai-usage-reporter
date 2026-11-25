@@ -94,7 +94,8 @@ def test_status_and_doctor_show_conflicts_and_rejections(
     assert cli.main(["doctor"]) == 0
     out, err = capsys.readouterr()
     assert "key_conflict 1" in out and "API key: from the environment" in out
-    assert "records that would be sent: 8" in out
+    # Only claude-code was pushed: its records went (one refused for good); codex's 3 are still to send.
+    assert "records collected: 8; a push would send 3 (4 unchanged since the last push, 1 refused earlier" in out
     _no_canaries(out + err)
 
 
@@ -113,6 +114,33 @@ def test_show_payload(env: dict[str, Path], capsys: pytest.CaptureFixture[str]) 
     out, _ = capsys.readouterr()
     records = json.loads(out)["records"]
     assert len(records) == 2 and all(r["usage_date"] == "2026-10-05" for r in records)
+
+
+def test_show_payload_and_dry_run_list_only_what_a_push_would_send(
+    env: dict[str, Path], server: FakeServer, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert cli.main(["show-payload", "--no-git"]) == 0
+    out, err = capsys.readouterr()
+    assert len(json.loads(out)["records"]) == 8
+    assert "8 records would be sent" in err
+
+    assert cli.main(["push", "--no-git"]) == 0
+    capsys.readouterr()
+    # Everything went: nothing is left to send, though every record is still collected.
+    assert cli.main(["show-payload", "--no-git"]) == 0
+    out, err = capsys.readouterr()
+    assert json.loads(out)["records"] == []
+    assert "0 records would be sent (0 from the queue); 8 unchanged since the last push" in err
+    assert cli.main(["push", "--dry-run", "--no-git"]) == 0
+    out, err = capsys.readouterr()
+    assert json.loads(out)["records"] == [] and "8 unchanged since the last push" in err
+
+    assert cli.main(["show-payload", "--no-git", "--all"]) == 0
+    out, err = capsys.readouterr()
+    assert len(json.loads(out)["records"]) == 8 and "--all" in err
+    assert cli.main(["doctor", "--offline"]) == 0
+    out, _ = capsys.readouterr()
+    assert "records collected: 8; a push would send 0 (8 unchanged since the last push" in out
 
 
 def test_init_stores_the_key_privately(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
