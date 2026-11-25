@@ -3,6 +3,38 @@
 Release notes of `specivo-ai-usage-reporter`. Install a release with
 `uv tool install git+https://github.com/specivo/ai-usage-reporter@vX.Y.Z` (or `pipx install`).
 
+## 0.4.0
+
+Routes, billing accounts, Hermes Agent, and a preview that matches the push.
+
+- **Hermes Agent** (`hermes` source): reads `state.db` in the Hermes home and in each profile. Hermes
+  keeps running totals per session and model, so the reporter sends their growth since its last
+  read and never counts twice. Child sessions count in their root session; the agent profile, the
+  unattended flag (cron runs) and the route are sent.
+- **Route** of each record, the backend the requests went through: Codex's `model_provider`,
+  OpenCode's `providerID` (its maker is sent as the provider only when the route names it, so a
+  gateway's usage is still priced), and for Claude Code the gateway host from
+  `ANTHROPIC_BASE_URL` (recorded by a new SessionStart hook or read from the settings) or the
+  claude.ai login.
+- **`[[cost_rules]]`** can match the route and the working folder, and set `billing_account`.
+- The optional record fields `route`, `billing_account`, `parent_session_id`, `unattended` and
+  `profile` are sent only to servers that list them; a record sent without them goes again once
+  the server does.
+- `show-payload` and `push --dry-run` print exactly what a push would send now (records unchanged
+  since the last push or refused for good are left out, and stderr says how many); `--all` prints
+  every collected record. `doctor` reports both counts.
+- Fixed: records sent without their agent_log issue to an older server go again with it once the
+  server takes it; billing account slugs may contain `_` and `.`, as the server allows.
+
+## 0.3.0
+
+- **Issue segments**: Claude Code, Codex and OpenCode 2 transcripts keep the agent's Specivo tool
+  calls, so a session's usage is split by the issue the agent was working on (status or assignee
+  changes, timer starts, created issues mark an issue), sent with `issue_ref_source: agent_log`.
+- A default project per source for sessions that no repository pattern maps.
+- Fixed: Windows file ids that do not fit in 64 bits; `init` replacing the key with the URL already
+  in the config, refusing what is not an API key, and explaining `--key-stdin` without a terminal.
+
 ## 0.2.0
 
 New sources, and pushing without thinking about it.
