@@ -434,7 +434,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     for error in registry.errors:
         print(f"plugin: {error}")
         problems += 1
-    collected = collect(config, registry, git=None)
+    preview: DeliverySummary | None = None
+    if state_path.exists():
+        # On a copy of the state, as a push collects (sources such as hermes count from it).
+        with State.scratch_copy(state_path) as scratch:
+            collected = collect(config, registry, state=scratch, git=None)
+            _wires, preview = _would_send(collected, scratch, Selection(), everything=False)
+    else:
+        collected = collect(config, registry, git=None)
     for report in collected.reports.values():
         enabled = config.source(report.name).enabled
         print(f"source {report.name}{'' if enabled else ' (disabled)'}:")
@@ -456,9 +463,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if imported:
         print(f"read through 'ai-usage import ccusage' instead of their logs: {', '.join(imported)}")
     line = f"records collected: {len(collected.records)}"
-    if state_path.exists():
-        with State.scratch_copy(state_path) as scratch:
-            _wires, preview = _would_send(collected, scratch, Selection(), everything=False)
+    if preview is not None:
         line += (
             f"; a push would send {preview.sent} ({preview.skipped_unchanged} unchanged since the last push,"
             f" {preview.skipped_final} refused earlier, {preview.retried_from_queue} from the queue)"
