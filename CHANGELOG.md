@@ -3,6 +3,16 @@
 Release notes of `specivo-ai-usage-reporter`. Install a release with
 `uv tool install git+https://github.com/specivo/ai-usage-reporter@vX.Y.Z` (or `pipx install`).
 
+## 0.4.1
+
+Documentation: keeping other work out of Specivo issues.
+
+- New section "Keep other work out of Specivo issues" in the docs: usage of a session that names no
+  issue or project can be counted for whatever issue another of your agent sessions worked on at the
+  same time. Map every repository in `[projects]` (patterns match `host/owner/repo`, `*` also
+  matches `/`, the first match wins), set `[sources.<tool>] project` for sessions outside git, or
+  list folders in `exclude_paths`. Check the result with `ai-usage show-payload`.
+
 ## 0.4.0
 
 Routes, billing accounts, Hermes Agent, and a preview that matches the push.
