@@ -231,7 +231,10 @@ the ingest contract bundled with the reporter,
 
 2. **The issues the agent marked** with its own Specivo tool calls, read from the tool's
    transcript (see below).
-3. Specivo's own record of an agent working on an issue over MCP during the session.
+3. Specivo's own record of an agent working on an issue over MCP during the session: first the
+   agent session with the same session id, then, when there is none, **any** of your agent
+   sessions that worked on an issue at the same time (see
+   [Keep other work out of Specivo issues](#keep-other-work-out-of-specivo-issues)).
 4. **Commits** you made in the session's repository while it ran (found with `git log`, by your
    `git config user.email`).
 5. **The branch**, when its name holds an issue key such as `feat/acme-12-login`.
@@ -242,6 +245,34 @@ Once an entry is attributed in Specivo, later pushes keep that attribution. If a
 different issue or project, Specivo refuses it with `attribution_conflict`. The reporter then
 sends the bucket once more without the issue and project it named, so the totals stay current, and
 lists the bucket in `ai-usage status`. Move the entry in Specivo if the old attribution is wrong.
+
+### Keep other work out of Specivo issues
+
+The reporter reads every session of every tool on the machine, whatever folder it ran in. A
+session that names no issue and no project of its own can be matched by time in step 3: if you
+run Codex in a client's repository while a Claude Code session in another repository works on
+`ACME-12`, the Codex usage may be counted for `ACME-12`.
+
+Give every repository you work in a project, so this cannot happen:
+
+```toml
+[projects]
+"github.com/acme/*" = "ACME"                  # your own product
+"git.client-a.example/*" = "CLIENTA"          # everything on the client's git host
+"github.com/client-b/billing-api" = "CLIENTB" # one repository
+```
+
+- A pattern is matched against `host/owner/repo` (lower case, without `https://`, `git@` or
+  `.git`), and `*` also matches `/`, so `host/*` covers every group and subgroup on that host.
+  The first pattern that matches wins, so put specific ones before broad ones.
+- With a project key on the record, Specivo drops an inferred issue (steps 3 to 5) that belongs to
+  another project and keeps the entry in the named project.
+- Sessions outside any git repository have no `host/owner/repo`: set `project` under
+  `[sources.<tool>]`, or set `SPECIVO_ISSUE` in that tool's environment.
+- Work that should never reach Specivo goes into `exclude_paths` instead
+  (`exclude_paths = ["~/code/client-a"]`).
+- Check the result with `ai-usage show-payload`: each record shows the repository and the
+  `project_key` it carries.
 
 ### Long sessions on several issues
 
@@ -530,7 +561,7 @@ your repositories in `[projects]` to get the precise reasons.
 | `exclude_paths` | Sessions that ran in these directories are never reported |
 | `[sources.<name>]` | `enabled = false` turns a source off; `roots = [...]` reads other directories; `via = "ccusage"` counts the tool through `import ccusage` instead of its logs; `project = "KEY"` is the tool's project when no `[projects]` repository pattern matches (for example sessions outside any git repository) |
 | `[[cost_rules]]` | `tool`, `model`, `repo`, `route`, `cwd` (patterns) → `cost_type`, `subscription_hint`, `billing_account`; the first match wins. See [Costs](#costs) |
-| `[projects]` | Repository pattern (`host/owner/repo`) → Specivo project key |
+| `[projects]` | Repository pattern (`host/owner/repo`, `*` matches `/` too) → Specivo project key; map every repository you work in, see [Keep other work out of Specivo issues](#keep-other-work-out-of-specivo-issues) |
 | `[long_context]` | Model pattern → long-context threshold in tokens |
 
 ## Troubleshooting
@@ -544,6 +575,7 @@ your repositories in `[projects]` to get the precise reasons.
 | `doctor` warns about the clock | Fix the computer's clock; records dated in the future are refused |
 | Records refused with `forbidden` | The account lacks **Log AI usage** in the project, or (with `on_behalf_of`) **Log AI usage for others** |
 | Records refused with `key_conflict` | Another account already reported these buckets for you; use one reporter per person |
+| Usage from another repository shows up on an issue (attribution `mcp_session`) | Another agent session worked on that issue at the same time; map the repository in `[projects]` or exclude its folder (see [Keep other work out of Specivo issues](#keep-other-work-out-of-specivo-issues)), then move the entry in Specivo |
 | `push` exits with status 1 | Some records are waiting for a retry (server busy or offline); the next push sends them |
 | Codex rollouts are skipped | Install the `zstd` extra |
 | `doctor` says an OpenCode database is busy | OpenCode was writing; the next push reads it |
