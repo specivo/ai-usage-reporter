@@ -334,7 +334,11 @@ Details of each step:
    longest part of the window wins. Before the time overlap, the server looks for a session
    that carries the record's `session_id` as its own client session id, and then one that
    carries `parent_session_id`: a subagent's usage goes to the issue its parent session works
-   on. Either match needs no time window.
+   on. Either match needs no time window. The time overlap leaves out sessions that carry a
+   client session id of their own (they match only by that id) and sessions whose MCP client
+   is a different AI tool than the record's `tool` (a Claude Code session is never matched to a
+   `codex` record). Usage from a repository mapped to a project (`attribution.project_key`)
+   also drops an overlapping session's issue in another project, as for every inferred issue.
 3. `commits` are full SHAs (40 or 64 hex digits) of commits made during the session. The issue
    most of them are linked to wins (links come from commit messages and branch names pushed
    to a connected repository). A tie goes to the older issue.
