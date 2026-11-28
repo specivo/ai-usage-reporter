@@ -300,6 +300,12 @@ def cmd_push(args: argparse.Namespace) -> int:
             " agent's log (the server does not take it, or could not use it)",
             file=sys.stderr,
         )
+    if summary.active_time_resent:
+        print(
+            f"{summary.active_time_resent} records went without their active time (the server refused it;"
+            " check the clock difference with ai-usage doctor)",
+            file=sys.stderr,
+        )
     return 1 if summary.statuses.get("pending") else 0
 
 

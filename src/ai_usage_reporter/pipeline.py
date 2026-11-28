@@ -396,6 +396,8 @@ class DeliverySummary:
     agent_log_resent: int = 0
     #: Records sent without their agent_log issue because the server does not take it.
     agent_log_left_out: int = 0
+    #: Records sent again without their active time after the server refused it.
+    active_time_resent: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -410,6 +412,7 @@ class DeliverySummary:
             "conflicts_resent": self.conflicts_resent,
             "agent_log_resent": self.agent_log_resent,
             "agent_log_left_out": self.agent_log_left_out,
+            "active_time_resent": self.active_time_resent,
         }
 
 
@@ -455,6 +458,24 @@ def refuses_agent_log_source(outcome: Outcome) -> bool:
     if outcome.status != "rejected" or outcome.error_code != "invalid_record":
         return False
     return "issue_ref_source" in f"{outcome.error_field or ''} {outcome.error_message or ''}"
+
+
+def has_active_time(wire: Mapping[str, Any]) -> bool:
+    return any(name in wire for name in ACTIVE_TIME_FIELDS)
+
+
+def strip_active_time(wire: Mapping[str, Any]) -> dict[str, Any]:
+    """The record without its measured active time; everything else stays."""
+    return {key: value for key, value in wire.items() if key not in ACTIVE_TIME_FIELDS}
+
+
+def refuses_active_time(outcome: Outcome) -> bool:
+    """The server rejected the record because of one of the active time fields."""
+    return (
+        outcome.status == "rejected"
+        and outcome.error_code == "invalid_record"
+        and (outcome.error_field or "").startswith("active_")
+    )
 
 
 def _agent_log_fallback(outcome: Outcome) -> bool:
@@ -604,6 +625,7 @@ def deliver(
     summary.sent = len(to_send)
     outcomes = sink.send(to_send) if to_send else []
     fallback: list[dict[str, Any]] = []
+    untimed: list[dict[str, Any]] = []
     if ledger is not None:
         by_key = {w["idempotency_key"]: w for w in to_send}
         kept: list[Outcome] = []
@@ -613,6 +635,8 @@ def deliver(
                 fallback.append(sent)
                 if refuses_agent_log_source(outcome):
                     _remember_agent_log_refused(sink, ledger, now)
+            elif sent is not None and has_active_time(sent) and refuses_active_time(outcome):
+                untimed.append(sent)
             else:
                 kept.append(outcome)
         outcomes = kept
@@ -626,6 +650,17 @@ def deliver(
         again = sink.send(stripped)
         for outcome in again:
             outcome.warnings = [*outcome.warnings, "agent_log_dropped"]
+        conflicts.extend(_record(again, stripped, ledger, summary, hashes=hashes))
+    if untimed and ledger is not None:
+        # The server refused the measured time (a clock ahead of the server's, a stricter rule): the tokens
+        # still go, without the three fields. The ledger keeps the hash of the record as built, so the bucket
+        # is tried with its time again only when it changes.
+        stripped = [strip_active_time(w) for w in untimed]
+        summary.active_time_resent = len(stripped)
+        hashes = {w["idempotency_key"]: payload_hash(w) for w in untimed}
+        again = sink.send(stripped)
+        for outcome in again:
+            outcome.warnings = [*outcome.warnings, "active_time_dropped"]
         conflicts.extend(_record(again, stripped, ledger, summary, hashes=hashes))
     if conflicts and ledger is not None:
         # Send once more without the explicit hints the stored entry contradicts.

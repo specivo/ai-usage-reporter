@@ -473,3 +473,49 @@ def test_doctor_shows_measured_hours_and_unplaced_seconds(cli_env: Path, capsys:
     out, _ = capsys.readouterr()
     assert "active time: 0.0 h measured in the last 7 days, 0 s unplaced" in out
     assert "CANARY" not in out
+
+
+def test_a_record_whose_active_time_is_refused_still_delivers_its_tokens(tmp_path: Path) -> None:
+    from tests.conftest import ok, result_item
+
+    home = active_time_home.build(tmp_path / "home")
+    server = FakeServer()
+    server.info["optional_fields"] = list(OPTIONAL_FIELDS)
+
+    def refuse_spans(records: list[dict[str, Any]]) -> Any:
+        def decide(i: int, r: dict[str, Any]) -> dict[str, Any]:
+            error = {"code": "invalid_record", "message": "span in the future", "field": "active_spans"}
+            return result_item(i, r["idempotency_key"], "rejected", error=error)
+
+        return ok(records, decide)
+
+    server.responders.append(refuse_spans)
+    sink = SpecivoSink("https://specivo.invalid", "spv_test", transport=server, sleep=lambda s: None)
+    with State.in_memory() as state:
+        summary = deliver(run(home, state=state).records, sink, state)
+        assert summary.active_time_resent == 2 and summary.warnings["active_time_dropped"] == 2
+        assert all(not set(ACTIVE_TIME_FIELDS) & set(r) and r["tokens"] for r in server.posts[1])
+        # Unchanged buckets are not sent again on the next push.
+        assert deliver(run(home, state=state).records, sink, state).sent == 0
+
+
+def test_in_file_sidechain_lines_are_their_own_thread(tmp_path: Path) -> None:
+    # Older Claude Code wrote Task sidechains into the main file; such a line is a thread of its own,
+    # for its usage, its marks and its events alike.
+    t = Transcript(SESSION)
+    t.prompt("2026-11-05T08:00:00.000Z").answer("2026-11-05T08:00:10.000Z")
+    side = Transcript(SESSION, agent="c0c0c0c0")
+    side.prompt("2026-11-05T08:00:01.000Z").answer("2026-11-05T08:00:31.000Z")
+    t.lines.extend(side.lines)
+    for n, line in enumerate(t.lines):
+        line["uuid"] = f"u-{n}"
+    t.write(tmp_path)
+    adapter = ClaudeCodeAdapter()
+    (src,) = list(adapter.discover(DiscoveryContext(home=tmp_path, env={})))
+    events = list(parse_all(adapter, src))
+    assert {e.thread_id for e in events if isinstance(e, ThreadEvent)} == {None, "agent-c0c0c0c0"}
+    assert {e.thread_id for e in events if isinstance(e, UsageEvent)} == {None, "agent-c0c0c0c0"}
+    # Main 10 s + sidechain 30 s, overlapping: 40 s summed, 08:00:00..08:00:31 joined.
+    record = by_model(wires(tmp_path))[SONNET]
+    assert record["active_seconds"] == 40
+    assert record["active_spans"] == [["2026-11-05T08:00:00Z", "2026-11-05T08:00:31Z"]]
