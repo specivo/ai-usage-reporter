@@ -309,7 +309,7 @@ of those calls leaves your machine. `ai-usage show-payload` shows the issue of e
 | Tool | Segments |
 |---|---|
 | Claude Code | Yes, main thread and subagents |
-| Codex | Yes (`function_call` and `mcp_tool_call_end` in the rollout) |
+| Codex | Yes (`McpToolCall` items of `item_completed` events in current rollouts, also for calls made from code mode; `function_call` and `mcp_tool_call_end` in older ones) |
 | OpenCode 2 | Yes, for status, assignee and timer calls (also calls made from code); a created issue's key is only read from a direct call's answer. Child sessions are threads of their root session |
 | Hermes | Yes, from the `tool_calls` of assistant messages (`mcp__<server>__specivo_*`); a created issue's key is read from the tool's answer. Child sessions are threads of their root session. Usage is placed at the time Hermes last saw it, so marks split it at push granularity |
 | OpenCode 1, Gemini CLI, `import ccusage` | Not read (OpenCode 1 keeps tool calls in a table of their own, ccusage has day totals only); Specivo's own match of MCP sessions (step 3) still applies |

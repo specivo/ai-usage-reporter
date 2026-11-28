@@ -337,6 +337,211 @@ def test_codex_marks_from_function_calls_and_mcp_results(tmp_path: Path) -> None
     assert "CANARY" not in json.dumps(wires)
 
 
+_CODEX_SESSION = "019a0000-0000-7000-8000-000000000002"
+
+
+def _codex_item(
+    ts: str,
+    call_id: str,
+    tool: str,
+    arguments: object,
+    *,
+    started_ms: object = None,
+    status: str = "completed",
+    result: object = "default",
+) -> str:
+    """A current-format MCP call: ``event_msg`` / ``item_completed`` with an ``McpToolCall`` item."""
+    if result == "default":
+        result = {"content": [{"type": "text", "text": "CANARY-TOOL-OUTPUT-9d07"}], "isError": False}
+    payload: dict[str, Any] = {
+        "type": "item_completed",
+        "thread_id": "thread-1",
+        "turn_id": "turn-1",
+        "item": {
+            "type": "McpToolCall",
+            "id": call_id,
+            "server": "specivo",
+            "tool": tool,
+            "arguments": arguments,
+            "status": status,
+            "duration": {"secs": 0, "nanos": 500},
+            "result": result,
+        },
+    }
+    if started_ms is not None:
+        payload["started_at_ms"] = started_ms
+    return _codex_line(ts, "event_msg", payload)
+
+
+def _codex_rollout(home: Path, calls: list[str]) -> None:
+    """A rollout with 100 input tokens at 08:00, the *calls* (all at 09:00), and 200 more tokens at 10:00."""
+    path = home / ".codex" / "sessions" / "2026" / "10" / "05" / f"rollout-2026-10-05T08-00-00-{_CODEX_SESSION}.jsonl"
+    path.parent.mkdir(parents=True)
+    lines = [
+        _codex_line("2026-10-05T08:00:00Z", "session_meta", {"id": _CODEX_SESSION, "cli_version": "0.60.0"}),
+        _codex_line("2026-10-05T08:00:00Z", "turn_context", {"model": "gpt-5-codex"}),
+        _codex_tokens("2026-10-05T08:00:10Z", 100),
+        *calls,
+        _codex_tokens("2026-10-05T10:00:00Z", 300),
+    ]
+    path.write_text("".join(lines), encoding="utf-8")
+
+
+def _codex_marks(home: Path) -> list[tuple[str | None, datetime]]:
+    [src] = CodexAdapter().discover(DiscoveryContext(home=home, env={}))
+    return [(e.issue_mark, e.timestamp) for e in CodexAdapter().parse(src) if e.issue_mark is not None]
+
+
+AT_9 = datetime(2026, 10, 5, 9, 0, tzinfo=UTC)
+#: The call started a second before its line was written (epoch milliseconds).
+STARTED = datetime(2026, 10, 5, 8, 59, 59, tzinfo=UTC)
+STARTED_MS = int(STARTED.timestamp() * 1000)
+
+
+@pytest.mark.parametrize(
+    ("tool", "arguments", "expected"),
+    [
+        ("specivo_update_issue", {"issue_ref": "acme-40", "status_id": 2, "notes": "CANARY-PROMPT-5c1e"}, "ACME-40"),
+        ("specivo_update_issue", {"issue_ref": "ACME-40", "assigned_to_id": 5}, "ACME-40"),
+        ("specivo_update_issue", '{"issue_ref": "ACME-40", "status_id": 2}', "ACME-40"),  # JSON text
+        ("specivo_update_issue", {"issue_ref": "ACME-40", "notes": "CANARY-PROMPT-5c1e"}, None),
+        ("specivo_timer", {"op": "start", "issue_ref": "ACME-41"}, "ACME-41"),
+        ("specivo_timer", {"op": "stop", "issue_ref": "ACME-41"}, None),
+        ("specivo_show_issue", {"issue_ref": "ACME-42"}, None),
+        ("mcp__work__specivo_update_issue", {"issue_ref": "ACME-43", "status_id": 2}, "ACME-43"),
+        ("specivo_update_issue", "not json", None),
+    ],
+)
+def test_codex_mcp_item_marks(tmp_path: Path, tool: str, arguments: object, expected: str | None) -> None:
+    _codex_rollout(tmp_path, [_codex_item("2026-10-05T09:00:00Z", "exec-1", tool, arguments, started_ms=STARTED_MS)])
+    assert _codex_marks(tmp_path) == ([(expected, STARTED)] if expected else [])
+
+
+def test_codex_mcp_item_create_marks_the_created_issue(tmp_path: Path) -> None:
+    created = {"content": [{"type": "text", "text": "Created issue ACME-44: CANARY-TOOL-OUTPUT-9d07"}]}
+    args = {"project_key": "ACME", "subject": "CANARY-PROMPT-5c1e"}
+    unparsable = {"content": [{"type": "text", "text": "Something else ACME-45"}], "isError": False}
+    _codex_rollout(
+        tmp_path,
+        [
+            _codex_item("2026-10-05T09:00:00Z", "exec-1", "specivo_create_issue", args, result=created),
+            _codex_item("2026-10-05T09:00:01Z", "exec-2", "specivo_create_issue", args, result=unparsable),
+        ],
+    )
+    # Without started_at_ms the line's timestamp is the call's time.
+    assert _codex_marks(tmp_path) == [("ACME-44", AT_9)]
+
+
+@pytest.mark.parametrize(
+    ("status", "result"),
+    [
+        ("failed", {"content": [{"type": "text", "text": "Created issue ACME-46: x"}], "isError": False}),
+        ("completed", {"content": [{"type": "text", "text": "Created issue ACME-46: x"}], "isError": True}),
+        ("completed", None),
+        ("failed", None),
+    ],
+)
+def test_codex_mcp_item_errors_mark_nothing(tmp_path: Path, status: str, result: object) -> None:
+    update = {"issue_ref": "ACME-46", "status_id": 2}
+    _codex_rollout(
+        tmp_path,
+        [
+            _codex_item("2026-10-05T09:00:00Z", "exec-1", "specivo_update_issue", update, status=status, result=result),
+            _codex_item("2026-10-05T09:00:01Z", "exec-2", "specivo_create_issue", {}, status=status, result=result),
+        ],
+    )
+    assert _codex_marks(tmp_path) == []
+
+
+def test_codex_one_mark_per_call_across_log_forms(tmp_path: Path) -> None:
+    update = {"issue_ref": "ACME-47", "status_id": 2}
+    created = {"content": [{"type": "text", "text": "Created issue ACME-48: x"}], "isError": False}
+    _codex_rollout(
+        tmp_path,
+        [
+            # An update logged as a function call and again as an item: one mark, at the first.
+            _codex_line(
+                "2026-10-05T09:00:00Z",
+                "response_item",
+                {
+                    "type": "function_call",
+                    "name": "specivo_update_issue",
+                    "arguments": json.dumps(update),
+                    "call_id": "c1",
+                },
+            ),
+            _codex_item("2026-10-05T09:00:02Z", "c1", "specivo_update_issue", update),
+            # A create announced as a function call is completed by its item, at the function call's time.
+            _codex_line(
+                "2026-10-05T09:30:00Z",
+                "response_item",
+                {"type": "function_call", "name": "specivo_create_issue", "arguments": "{}", "call_id": "c2"},
+            ),
+            _codex_item("2026-10-05T09:30:02Z", "c2", "specivo_create_issue", {}, result=created),
+            _codex_line(
+                "2026-10-05T09:30:03Z",
+                "event_msg",
+                {
+                    "type": "mcp_tool_call_end",
+                    "call_id": "c2",
+                    "invocation": {"tool": "specivo_create_issue", "arguments": {}},
+                    "result": {"Ok": created},
+                },
+            ),
+        ],
+    )
+    assert _codex_marks(tmp_path) == [
+        ("ACME-47", AT_9),
+        ("ACME-48", datetime(2026, 10, 5, 9, 30, tzinfo=UTC)),
+    ]
+
+
+def test_codex_item_then_older_forms_and_malformed_items(tmp_path: Path) -> None:
+    created = {"content": [{"type": "text", "text": "Created issue ACME-50: x"}], "isError": False}
+    failed = {"content": [{"type": "text", "text": "Created issue ACME-51: x"}], "isError": True}
+    end = {
+        "type": "mcp_tool_call_end",
+        "call_id": "c1",
+        "invocation": {"tool": "specivo_create_issue", "arguments": {}},
+        "result": {"Ok": created},
+    }
+    _codex_rollout(
+        tmp_path,
+        [
+            # Malformed items are skipped without an error.
+            _codex_line("2026-10-05T08:30:00Z", "event_msg", {"type": "item_completed", "item": "not an object"}),
+            _codex_line("2026-10-05T08:30:01Z", "event_msg", {"type": "item_completed"}),
+            _codex_item("2026-10-05T08:30:02Z", None, "specivo_timer", {"op": "start", "issue_ref": "ACME-52"}),  # type: ignore[arg-type]
+            _codex_item("2026-10-05T08:30:03Z", "c0", "specivo_create_issue", {}, result={"content": "CANARY"}),
+            # A create item (at started_at_ms), then the same call as mcp_tool_call_end: one mark.
+            _codex_item(
+                "2026-10-05T09:00:00Z", "c1", "specivo_create_issue", {}, started_ms=STARTED_MS, result=created
+            ),
+            _codex_line("2026-10-05T09:00:01Z", "event_msg", end),
+            # A create announced as a function call whose item failed: no mark, and the end marks nothing either.
+            _codex_line(
+                "2026-10-05T09:30:00Z",
+                "response_item",
+                {"type": "function_call", "name": "specivo_create_issue", "arguments": "{}", "call_id": "c2"},
+            ),
+            _codex_item("2026-10-05T09:30:02Z", "c2", "specivo_create_issue", {}, status="failed", result=failed),
+            _codex_line("2026-10-05T09:30:03Z", "event_msg", {**end, "call_id": "c2"}),
+        ],
+    )
+    assert _codex_marks(tmp_path) == [("ACME-50", STARTED)]
+
+
+def test_codex_mcp_items_split_the_session(tmp_path: Path) -> None:
+    update = {"issue_ref": "acme-49", "status_id": 2, "notes": "CANARY-PROMPT-5c1e"}
+    _codex_rollout(tmp_path, [_codex_item("2026-10-05T09:00:00Z", "exec-1", "specivo_update_issue", update)])
+    wires = [r.to_wire() for r in _collect(tmp_path, adapter=CodexAdapter()).records]
+    assert [(w["attribution"]["issue_ref"], w["attribution"]["issue_ref_source"]) for w in wires] == [
+        ("ACME-49", "agent_log")
+    ]
+    assert wires[0]["tokens"]["input"] == 300
+    assert "CANARY" not in json.dumps(wires)
+
+
 def test_opencode_marks_from_tool_parts(tmp_path: Path) -> None:
     data_dir = tmp_path / ".local" / "share" / "opencode"
     data_dir.mkdir(parents=True)

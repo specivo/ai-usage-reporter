@@ -62,5 +62,50 @@
     "tool": "codex",
     "tool_version": "0.50.0",
     "usage_date": "2026-10-05"
+  },
+  {
+    "attribution": {
+      "issue_ref": "ACME-21",
+      "issue_ref_source": "agent_log"
+    },
+    "ended_at": "2026-10-06T09:02:00Z",
+    "idempotency_key": "e92c3200bea5649ce7ab993100a83c9b55fa58ef1c6072cc270b3dda11984c7f",
+    "model": "gpt-5-codex",
+    "provider": "openai",
+    "request_count": 2,
+    "route": "openai",
+    "session_id": "99999999-9999-4999-8999-999999999999",
+    "started_at": "2026-10-06T09:00:10Z",
+    "tokens": {
+      "cache_read": 100,
+      "input": 900,
+      "output": 100
+    },
+    "tool": "codex",
+    "tool_version": "0.60.0",
+    "usage_date": "2026-10-06"
+  },
+  {
+    "attribution": {
+      "issue_ref": "ACME-22",
+      "issue_ref_source": "agent_log"
+    },
+    "ended_at": "2026-10-06T09:06:00Z",
+    "idempotency_key": "ddf97706bce703a912dd475393b5ef40ed5b1856c388044ed681523f9b1b84f6",
+    "model": "gpt-5-codex",
+    "provider": "openai",
+    "request_count": 1,
+    "route": "openai",
+    "session_id": "99999999-9999-4999-8999-999999999999",
+    "started_at": "2026-10-06T09:06:00Z",
+    "tokens": {
+      "cache_read": 200,
+      "input": 400,
+      "output": 40,
+      "reasoning": 20
+    },
+    "tool": "codex",
+    "tool_version": "0.60.0",
+    "usage_date": "2026-10-06"
   }
 ]

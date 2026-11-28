@@ -260,6 +260,38 @@ def _count(ts: str, total: dict[str, int] | None, last: dict[str, int] | None) -
     return _codex_line(ts, "event_msg", {"type": "token_count", "info": info})
 
 
+def _mcp_item(
+    ts: str,
+    call_id: str,
+    tool: str,
+    arguments: dict[str, Any],
+    started_ms: int,
+    text: str,
+    status: str = "completed",
+    is_error: bool = False,
+) -> dict[str, Any]:
+    """A current-format MCP call: an ``item_completed`` event with an ``McpToolCall`` item."""
+    item = {
+        "type": "McpToolCall",
+        "id": call_id,
+        "server": "specivo",
+        "tool": tool,
+        "arguments": arguments,
+        "status": status,
+        "duration": {"secs": 1, "nanos": 0},
+        "result": {"content": [{"type": "text", "text": text}], "isError": is_error},
+    }
+    payload = {
+        "type": "item_completed",
+        "thread_id": "thread-1",
+        "turn_id": "turn-1",
+        "started_at_ms": started_ms,
+        "completed_at_ms": started_ms + 1000,
+        "item": item,
+    }
+    return _codex_line(ts, "event_msg", payload)
+
+
 def codex() -> None:
     root = HERE / "codex"
     shutil.rmtree(root, ignore_errors=True)
@@ -327,6 +359,60 @@ def codex() -> None:
             _codex_line("2026-10-04T10:00:01.000Z", "turn_context", {"model": "gpt-5-codex"}),
             _count("2026-10-04T10:00:10.000Z", _tokens(100, 0, 50, 0), None),
             _count("2026-10-04T10:00:20.000Z", _tokens(300, 50, 120, 20), None),
+        ],
+    )
+    # A current rollout: MCP calls are logged as completed McpToolCall items.
+    s3 = "99999999-9999-4999-8999-999999999999"
+    _write(
+        codex_home / "sessions" / "2026" / "10" / "06" / f"rollout-2026-10-06T09-00-00-{s3}.jsonl",
+        [
+            _codex_line(
+                "2026-10-06T09:00:00.000Z",
+                "session_meta",
+                {"id": s3, "cwd": cwd, "cli_version": "0.60.0", "model_provider": "openai"},
+            ),
+            _codex_line("2026-10-06T09:00:01.000Z", "turn_context", {"cwd": cwd, "model": "gpt-5-codex"}),
+            _count("2026-10-06T09:00:10.000Z", _tokens(400, 0, 40, 0), None),
+            # Status change: marks ACME-21 from the time the call started.
+            _mcp_item(
+                "2026-10-06T09:01:01.000Z",
+                "exec-call-1",
+                "specivo_update_issue",
+                {"issue_ref": "acme-21", "status_id": 2, "notes": f"Started {CANARY_PROMPT}"},
+                started_ms=1_791_277_260_000,  # 2026-10-06T09:01:00Z
+                text=f"Updated issue ACME-21: {CANARY_OUTPUT}",
+            ),
+            _count("2026-10-06T09:02:00.000Z", _tokens(1000, 100, 100, 0), None),
+            # Reading an issue marks nothing.
+            _mcp_item(
+                "2026-10-06T09:03:00.000Z",
+                "exec-call-2",
+                "specivo_show_issue",
+                {"issue_ref": "ACME-99"},
+                started_ms=1_791_277_379_000,
+                text=f"Issue ACME-99 {CANARY_OUTPUT}",
+            ),
+            # A failed call marks nothing.
+            _mcp_item(
+                "2026-10-06T09:04:00.000Z",
+                "exec-call-3",
+                "specivo_update_issue",
+                {"issue_ref": "ACME-98", "status_id": 3},
+                started_ms=1_791_277_439_000,
+                text=f"Permission denied {CANARY_OUTPUT}",
+                status="failed",
+                is_error=True,
+            ),
+            # A created issue marks the key from the result.
+            _mcp_item(
+                "2026-10-06T09:05:01.000Z",
+                "exec-call-4",
+                "specivo_create_issue",
+                {"project_key": "ACME", "subject": f"Search {CANARY_PROMPT}"},
+                started_ms=1_791_277_500_000,  # 2026-10-06T09:05:00Z
+                text=f"Created issue ACME-22: Search {CANARY_OUTPUT}",
+            ),
+            _count("2026-10-06T09:06:00.000Z", _tokens(1600, 300, 160, 20), None),
         ],
     )
     # Fixed modification times so discovery order is stable.
