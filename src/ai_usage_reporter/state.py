@@ -1,7 +1,8 @@
 """Local state in SQLite (``state.db`` in the state directory).
 
 - ``files``: one row per log file with its identity (inode, device, size,
-  mtime) and the parser version that read it, plus the parsed usage events.
+  mtime) and the parser version that read it, plus the parsed usage events
+  and thread events (for active time).
   A file whose identity and parser version are unchanged is not parsed again.
   These rows hold local paths and working directories; they never leave the
   machine.
@@ -30,13 +31,13 @@ from __future__ import annotations
 import json
 import sqlite3
 import zlib
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ai_usage_reporter.model import UsageEvent
+from ai_usage_reporter.model import ThreadEvent, UsageEvent, event_from_cache
 
 SCHEMA_VERSION = 3
 #: The state database's file name in the state directory.
@@ -262,7 +263,9 @@ class State:
 
     # -- files -----------------------------------------------------------------
 
-    def cached_events(self, path: Path, identity: FileIdentity, parser_version: str) -> list[UsageEvent] | None:
+    def cached_events(
+        self, path: Path, identity: FileIdentity, parser_version: str
+    ) -> list[UsageEvent | ThreadEvent] | None:
         row = self.db.execute("SELECT * FROM files WHERE path = ?", (str(path),)).fetchone()
         if row is None or row["parser_version"] != parser_version:
             return None
@@ -274,7 +277,7 @@ class State:
         ):
             return None
         data = json.loads(zlib.decompress(row["events"]))
-        return [UsageEvent.from_cache(item) for item in data]
+        return [event_from_cache(item) for item in data]
 
     def store_events(
         self,
@@ -282,7 +285,7 @@ class State:
         adapter: str,
         identity: FileIdentity,
         parser_version: str,
-        events: list[UsageEvent],
+        events: Sequence[UsageEvent | ThreadEvent],
         *,
         lines: int,
         malformed_lines: int,

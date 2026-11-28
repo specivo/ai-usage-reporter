@@ -77,6 +77,8 @@ class ParseStats:
     malformed_lines: int = 0
     events: int = 0
     skipped_events: int = 0
+    #: Thread events (prompts, model output, tool calls) read for active time.
+    thread_events: int = 0
     #: Things about the file the person should know (a schema newer than the
     #: adapter was tested with, counters that went back); shown by ``push`` and ``doctor``.
     notes: list[str] = field(default_factory=list)
@@ -214,6 +216,67 @@ class UsageEvent:
 
 
 _DATETIME_FIELDS = ("timestamp", "span_start")
+
+#: The kinds of :class:`ThreadEvent` (see the active time definition in :mod:`ai_usage_reporter.activity`).
+PROMPT = "prompt"
+MODEL = "model"
+TOOL_START = "tool_start"
+TOOL_END = "tool_end"
+TURN_END = "turn_end"
+THREAD_EVENT_KINDS = (PROMPT, MODEL, TOOL_START, TOOL_END, TURN_END)
+#: Marks a :class:`ThreadEvent` in the parse cache, next to the usage events.
+_THREAD_CACHE_TAG = "thread_event"
+
+
+@dataclass(frozen=True, slots=True)
+class ThreadEvent:
+    """A moment in one thread of a session, read for measuring active time.
+
+    A thread is the main conversation of a session (``thread_id`` ``None``) or
+    one subagent; ``thread_id`` matches :attr:`UsageEvent.thread_id` of the
+    requests made in it. ``kind`` is one of :data:`THREAD_EVENT_KINDS`;
+    ``call_id`` pairs a ``tool_start`` with its ``tool_end``. The flags classify
+    a tool call for the definition's exceptions and may be set on either event
+    of the pair: a tool whose run is a person answering (``human_wait``), a call
+    that blocks until a child thread finishes (``subagent_wait``), and a call a
+    person approved or rejected by hand (``user_decided``). ``key`` names the
+    event across all files of the adapter (a replayed line gives the same key),
+    so it is counted once; ``None``: never deduplicated.
+
+    Local only, like :class:`UsageEvent`: nothing here is ever serialised for
+    the network, only the seconds and spans computed from it.
+    """
+
+    tool: str
+    session_id: str
+    thread_id: str | None
+    timestamp: datetime
+    kind: str
+    call_id: str | None = None
+    human_wait: bool = False
+    subagent_wait: bool = False
+    user_decided: bool = False
+    key: str | None = None
+
+    def to_cache(self) -> dict[str, Any]:
+        """A JSON-able form for the local parse cache (never sent anywhere)."""
+        data: dict[str, Any] = {f.name: getattr(self, f.name) for f in fields(self)}
+        data["timestamp"] = self.timestamp.isoformat()
+        data[_THREAD_CACHE_TAG] = True
+        return data
+
+    @classmethod
+    def from_cache(cls, data: Mapping[str, Any]) -> ThreadEvent:
+        values = {k: v for k, v in data.items() if k in {f.name for f in fields(cls)}}
+        values["timestamp"] = datetime.fromisoformat(values["timestamp"])
+        return cls(**values)
+
+
+def event_from_cache(data: Mapping[str, Any]) -> UsageEvent | ThreadEvent:
+    """A cached usage or thread event (a cache written before thread events holds usage only)."""
+    if data.get(_THREAD_CACHE_TAG) is True:
+        return ThreadEvent.from_cache(data)
+    return UsageEvent.from_cache(data)
 
 
 def parse_timestamp(value: object) -> datetime | None:

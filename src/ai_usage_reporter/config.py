@@ -198,6 +198,8 @@ class Config:
     git_commits: bool = True
     #: Split sessions by the issues the agent marked with its Specivo tool calls, and send them.
     agent_log_issues: bool = True
+    #: Send the measured active time (seconds and spans) of sessions whose tool logs it.
+    active_time: bool = True
     exclude_paths: tuple[str, ...] = ()
     sources: Mapping[str, SourceSettings] = field(default_factory=dict)
     cost_rules: tuple[CostRule, ...] = ()
@@ -252,7 +254,7 @@ def _str_list(data: Mapping[str, Any], key: str, where: str) -> tuple[str, ...]:
 def parse_config(data: Mapping[str, Any], path: Path | None = None) -> Config:
     known = {
         "url", "allow_insecure_http", "timezone", "on_behalf_of", "git_enrichment", "git_commits", "exclude_paths",
-        "agent_log_issues", "sources", "cost_rules", "projects", "long_context",
+        "agent_log_issues", "active_time", "sources", "cost_rules", "projects", "long_context",
     }  # fmt: skip
     unknown = sorted(set(data) - known)
     if unknown:
@@ -263,6 +265,7 @@ def parse_config(data: Mapping[str, Any], path: Path | None = None) -> Config:
         ("git_enrichment", True),
         ("allow_insecure_http", False),
         ("agent_log_issues", True),
+        ("active_time", True),
     ):
         value = data.get(name, default)
         if not isinstance(value, bool):
@@ -342,6 +345,7 @@ def parse_config(data: Mapping[str, Any], path: Path | None = None) -> Config:
         on_behalf_of=_opt_str(data, "on_behalf_of", ""),
         git_commits=flags["git_commits"],
         agent_log_issues=flags["agent_log_issues"],
+        active_time=flags["active_time"],
         exclude_paths=_str_list(data, "exclude_paths", ""),
         sources=sources,
         cost_rules=tuple(rules),
@@ -388,6 +392,12 @@ git_commits = true
 # calls (status, assignee, timer start, created issue). Only the tool name and
 # the issue key are read from the transcript.
 agent_log_issues = true
+
+# Send how long the agent was active in each record: the summed seconds and
+# the intervals (start and end, to the second) when it worked. Measured from
+# the timestamps of prompts, model answers and tool calls; nothing of their
+# content is read. Claude Code only for now.
+active_time = true
 
 # Sessions that ran in these directories are never reported.
 exclude_paths = []

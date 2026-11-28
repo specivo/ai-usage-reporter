@@ -30,6 +30,29 @@ What the transcript format looks like, and what this adapter does with it:
   and the issue key are read. A subagent's markers and usage carry its
   transcript's name as their ``thread``.
 
+- **Active time.** :meth:`ClaudeCodeAdapter.parse_events` also yields the
+  thread events :mod:`ai_usage_reporter.activity` measures. Each thread is the
+  main conversation of a session, one subagent transcript (named after its
+  file, like the markers) or an in-file sidechain (``agent-<agentId>``):
+
+  - ``prompt``: a ``user`` line without a ``tool_result`` block. A line with
+    ``isMeta`` is a prompt only when its ``origin.kind`` names who started the
+    turn (background notifications and subagent hand-backs are written as
+    ``isMeta`` lines with an origin); other ``isMeta`` lines (injected context)
+    are no events;
+  - ``model``: every ``assistant`` line;
+  - ``tool_start``: a ``tool_use`` block (its ``id`` and, to classify it, its
+    ``name``); ``tool_end``: a ``tool_result`` block (its ``tool_use_id``);
+  - ``turn_end``: a ``system`` line of subtype ``turn_duration`` (its
+    ``durationMs`` is not used: it covers background waits).
+
+  ``AskUserQuestion`` and ``ExitPlanMode`` wait for a person. An ``Agent`` or
+  ``Task`` call whose result is not an async launch waits for its subagent. A
+  call a person approved or rejected by hand has a ``permissionDecision``
+  whose ``source`` is not ``config``, or ``toolDenialKind: user-rejected``.
+  An event is named by the line's ``uuid``, so a line replayed in a resumed or
+  copied file counts once. Nothing else of a line is read for this.
+
 - **Route.** Claude Code does not log the endpoint it called, so the route
   comes from, in this order:
 
@@ -67,7 +90,19 @@ from ai_usage_reporter.adapters import DiscoveryContext, HookSpec
 from ai_usage_reporter.adapters._jsonl import get_str, iter_json_lines
 from ai_usage_reporter.adapters._routes import url_host
 from ai_usage_reporter.issue_marks import CREATE, created_issue, marking_call
-from ai_usage_reporter.model import SourceFile, TokenCounts, UsageEvent, count, parse_timestamp
+from ai_usage_reporter.model import (
+    MODEL,
+    PROMPT,
+    TOOL_END,
+    TOOL_START,
+    TURN_END,
+    SourceFile,
+    ThreadEvent,
+    TokenCounts,
+    UsageEvent,
+    count,
+    parse_timestamp,
+)
 from ai_usage_reporter.state import State
 
 #: The environment variable that sends Claude Code to another endpoint (a gateway).
@@ -78,6 +113,10 @@ MAX_SETTINGS_BYTES = 1024 * 1024
 PROJECT_SETTINGS = (Path(".claude") / "settings.local.json", Path(".claude") / "settings.json")
 #: The route of a claude.ai login: the prefix of the hashed organization id.
 ORG_ROUTE_PREFIX = "claude.ai:org-"
+#: Tools whose run is a person answering (active time: they count nothing).
+HUMAN_WAIT_TOOLS = frozenset({"AskUserQuestion", "ExitPlanMode"})
+#: Tools that start a subagent; in the foreground the call waits for it to finish.
+SUBAGENT_TOOLS = frozenset({"Agent", "Task"})
 
 
 def _config_dirs(ctx: DiscoveryContext) -> list[Path]:
@@ -138,6 +177,26 @@ def settings_host(path: Path) -> str | None:
     return host[:100] if host else None
 
 
+def _sidechain_thread(line: dict[str, Any]) -> str | None:
+    """The thread of an in-file sidechain line of a main transcript (older Claude Code), else ``None``."""
+    if line.get("isSidechain") is not True:
+        return None
+    agent = get_str(line, "agentId")
+    return f"agent-{agent}" if agent else "sidechain"
+
+
+def _decided_by_person(line: dict[str, Any]) -> bool:
+    """Whether a person approved or rejected the tool call of a ``tool_result`` line by hand."""
+    source = get_str(line, "permissionDecision", "source")
+    return (source is not None and source != "config") or line.get("toolDenialKind") == "user-rejected"
+
+
+def _async_launch(line: dict[str, Any]) -> bool:
+    """Whether an ``Agent``/``Task`` result only launched the subagent in the background."""
+    result = line.get("toolUseResult")
+    return isinstance(result, dict) and (result.get("status") == "async_launched" or result.get("isAsync") is True)
+
+
 def _usage_tokens(usage: dict[str, Any]) -> TokenCounts:
     split = usage.get("cache_creation")
     if isinstance(split, dict):
@@ -157,7 +216,7 @@ def _usage_tokens(usage: dict[str, Any]) -> TokenCounts:
 class ClaudeCodeAdapter:
     name = "claude-code"
     provider = "anthropic"
-    parser_version = "claude-code/3"
+    parser_version = "claude-code/4"
 
     def __init__(self) -> None:
         #: Session -> the base URL host the hook saw ('' for none), for the parses of one run.
@@ -174,11 +233,19 @@ class ClaudeCodeAdapter:
                     yield SourceFile(adapter=self.name, path=path, root=projects, session_hint=session_from_path(path))
 
     def parse(self, src: SourceFile) -> Iterator[UsageEvent]:
+        for event in self.parse_events(src):
+            if isinstance(event, UsageEvent):
+                yield event
+
+    def parse_events(self, src: SourceFile) -> Iterator[UsageEvent | ThreadEvent]:
+        """Usage events and markers, and the thread events for active time, in one pass."""
         file_session = src.session_hint or session_from_path(src.path)
         is_subagent_file = "subagents" in src.path.parts
-        thread = src.path.name.split(".", 1)[0] if is_subagent_file else None
+        file_thread = src.path.name.split(".", 1)[0] if is_subagent_file else None
         #: specivo_create_issue calls waiting for their result: tool_use id -> (time, session, cwd).
         creating: dict[str, tuple[Any, str, str | None]] = {}
+        #: Tool names by tool_use id, to classify a tool_result for active time.
+        names: dict[str, str | None] = {}
         #: Usage waits for the end of the file, where the organization line (wherever it was) is known.
         usage: list[UsageEvent] = []
         organization: str | None = None
@@ -186,12 +253,17 @@ class ClaudeCodeAdapter:
             if line.get("type") == "session-owner":
                 organization = organization or get_str(line, "organizationUuid")
                 continue
+            thread = file_thread if is_subagent_file else _sidechain_thread(line)
+            for thread_event in self._thread_events(line, file_session, is_subagent_file, thread, names):
+                src.stats.thread_events += 1
+                yield thread_event
             message = line.get("message")
             if not isinstance(message, dict):
                 continue
             kind = line.get("type")
             if kind in ("assistant", "user") and isinstance(message.get("content"), list):
-                yield from self._marks(line, message["content"], kind, file_session, thread, creating)
+                session = file_session if is_subagent_file else (get_str(line, "sessionId") or file_session)
+                yield from self._marks(line, message["content"], kind, session, thread, creating)
             if not isinstance(message.get("usage"), dict):
                 continue
             when = parse_timestamp(line.get("timestamp"))
@@ -199,7 +271,7 @@ class ClaudeCodeAdapter:
                 src.stats.skipped_events += 1
                 continue
             # A subagent file always folds into the session directory it sits in.
-            session = file_session if thread is not None else (get_str(line, "sessionId") or file_session)
+            session = file_session if is_subagent_file else (get_str(line, "sessionId") or file_session)
             branch = get_str(line, "gitBranch")
             common: dict[str, Any] = {
                 "tool": self.name,
@@ -256,17 +328,87 @@ class ClaudeCodeAdapter:
                 return host
         return None
 
+    def _thread_events(
+        self,
+        line: dict[str, Any],
+        file_session: str,
+        is_subagent_file: bool,
+        thread: str | None,
+        names: dict[str, str | None],
+    ) -> Iterator[ThreadEvent]:
+        """The thread events of one line (see the module docs); reads ids, names and the permission source only."""
+        kind = line.get("type")
+        if kind not in ("user", "assistant", "system"):
+            return
+        when = parse_timestamp(line.get("timestamp"))
+        if when is None:
+            return
+        session = file_session if is_subagent_file else (get_str(line, "sessionId") or file_session)
+        uuid = get_str(line, "uuid")
+
+        def event(name: str, call_id: str | None = None, **flags: bool) -> ThreadEvent:
+            origin = uuid or f"{session}|{thread or ''}|{when.isoformat()}"
+            return ThreadEvent(
+                tool=self.name,
+                session_id=session,
+                thread_id=thread,
+                timestamp=when,
+                kind=name,
+                call_id=call_id,
+                key=f"{origin}|{name}|{call_id or ''}",
+                **flags,
+            )
+
+        if kind == "system":
+            if line.get("subtype") == "turn_duration":
+                yield event(TURN_END)
+            return
+        message = line.get("message")
+        if not isinstance(message, dict):
+            return
+        content = message.get("content")
+        blocks = [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+        if kind == "assistant":
+            yield event(MODEL)
+            for block in blocks:
+                if block.get("type") != "tool_use":
+                    continue
+                call_id = get_str(block, "id")
+                if call_id is None:
+                    continue
+                tool = get_str(block, "name")
+                names[call_id] = tool
+                yield event(TOOL_START, call_id, human_wait=tool in HUMAN_WAIT_TOOLS)
+            return
+        results = [b for b in blocks if b.get("type") == "tool_result"]
+        if not results:
+            if line.get("isMeta") is not True or get_str(line, "origin", "kind") is not None:
+                yield event(PROMPT)
+            return
+        decided = _decided_by_person(line)
+        for block in results:
+            call_id = get_str(block, "tool_use_id")
+            if call_id is None:
+                continue
+            tool = names.get(call_id)
+            yield event(
+                TOOL_END,
+                call_id,
+                human_wait=tool in HUMAN_WAIT_TOOLS,
+                subagent_wait=tool in SUBAGENT_TOOLS and not _async_launch(line),
+                user_decided=decided,
+            )
+
     def _marks(
         self,
         line: dict[str, Any],
         blocks: list[Any],
         kind: object,
-        file_session: str,
+        session: str,
         thread: str | None,
         creating: dict[str, tuple[Any, str, str | None]],
     ) -> Iterator[UsageEvent]:
         """Markers for the marking Specivo calls of one line (see :mod:`ai_usage_reporter.issue_marks`)."""
-        session = file_session if thread is not None else (get_str(line, "sessionId") or file_session)
         cwd = get_str(line, "cwd")
         for block in blocks:
             if not isinstance(block, dict):

@@ -1,0 +1,72 @@
+[
+  {
+    "active_seconds": 218,
+    "active_spans": [
+      [
+        "2026-11-05T08:06:22Z",
+        "2026-11-05T08:10:00Z"
+      ]
+    ],
+    "active_time_version": 1,
+    "attribution": {
+      "git_branch": "main"
+    },
+    "ended_at": "2026-11-05T08:25:00Z",
+    "idempotency_key": "9a8ce69de66d996b950d21ed28a294b389f94bd1144b88462c93f87d99d53f15",
+    "model": "claude-haiku-4-5",
+    "provider": "anthropic",
+    "request_count": 3,
+    "session_id": "a7a7a7a7-0000-4000-8000-000000000001",
+    "started_at": "2026-11-05T08:06:30Z",
+    "tokens": {
+      "input": 300,
+      "output": 30
+    },
+    "tool": "claude-code",
+    "tool_version": "2.1.0",
+    "usage_date": "2026-11-05"
+  },
+  {
+    "active_seconds": 507,
+    "active_spans": [
+      [
+        "2026-11-05T08:00:00Z",
+        "2026-11-05T08:06:31Z"
+      ],
+      [
+        "2026-11-05T08:07:00Z",
+        "2026-11-05T08:08:00Z"
+      ],
+      [
+        "2026-11-05T08:09:00Z",
+        "2026-11-05T08:09:10Z"
+      ],
+      [
+        "2026-11-05T08:20:00Z",
+        "2026-11-05T08:20:05Z"
+      ],
+      [
+        "2026-11-05T11:20:05Z",
+        "2026-11-05T11:20:46Z"
+      ]
+    ],
+    "active_time_version": 1,
+    "attribution": {
+      "git_branch": "main"
+    },
+    "ended_at": "2026-11-05T11:20:45Z",
+    "idempotency_key": "3cceb1ec7a54a0b8027533450328672355a704896a034bc3f12a8d909ecbff51",
+    "model": "claude-sonnet-4-5",
+    "provider": "anthropic",
+    "request_count": 8,
+    "session_id": "a7a7a7a7-0000-4000-8000-000000000001",
+    "started_at": "2026-11-05T08:00:10Z",
+    "tokens": {
+      "input": 800,
+      "output": 80
+    },
+    "tool": "claude-code",
+    "tool_version": "2.1.0",
+    "usage_date": "2026-11-05"
+  }
+]

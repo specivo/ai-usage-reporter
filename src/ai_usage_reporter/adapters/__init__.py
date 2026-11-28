@@ -20,7 +20,7 @@ from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from ai_usage_reporter.model import SourceFile, UsageEvent
+from ai_usage_reporter.model import SourceFile, ThreadEvent, UsageEvent
 
 ENTRY_POINT_GROUP = "ai_usage_reporter.adapters"
 
@@ -77,6 +77,12 @@ class Adapter(Protocol):
       malformed lines in ``src.stats`` and goes on.
     - :meth:`dedup_key` names the request across all files of the adapter
       (``None``: never deduplicated).
+
+    Optional: an adapter that can measure active time also has
+    ``parse_events(src)``, which yields the same usage events as :meth:`parse`
+    and, from the same pass, :class:`~ai_usage_reporter.model.ThreadEvent` s
+    (see :mod:`ai_usage_reporter.activity`). The pipeline calls it instead of
+    :meth:`parse` when it exists; adapters without it simply measure no time.
     """
 
     name: str
@@ -88,6 +94,15 @@ class Adapter(Protocol):
     def parse(self, src: SourceFile) -> Iterator[UsageEvent]: ...
 
     def dedup_key(self, event: UsageEvent) -> str | None: ...
+
+
+def parse_all(adapter: Adapter, src: SourceFile) -> Iterator[UsageEvent | ThreadEvent]:
+    """The usage events of *src* and, when the adapter yields them, its thread events."""
+    parse_events = getattr(adapter, "parse_events", None)
+    if callable(parse_events):
+        yield from parse_events(src)
+    else:
+        yield from adapter.parse(src)
 
 
 def adapter_hook(adapter: Adapter) -> HookSpec | None:

@@ -186,6 +186,12 @@ first marked issue. Subagents count for the issue they marked, else for the one 
 on when they started. Only the tool name and the issue key are read from those calls. Claude Code,
 Codex, OpenCode 2 and Hermes transcripts show the calls; `agent_log_issues = false` turns it off.
 
+For Claude Code the reporter also measures how long the agent was active, from the timestamps of
+prompts, model answers and tool calls (never their content), and sends the seconds and the spans
+(start and end, to the second) with each record to servers that accept them (Specivo 0.16.0 or
+later). Waits for you, for background jobs and for subagents do not count; `active_time = false`
+turns it off. See [Active time](docs/index.md#active-time).
+
 ## Privacy
 
 - **Never sent, never printed, never logged:** prompts, responses, code, tool input and output

@@ -1,4 +1,4 @@
-"""The pipeline: discover, parse (or reuse), deduplicate, bucket, enrich, serialise, send.
+"""The pipeline: discover, parse (or reuse), deduplicate, measure, bucket, enrich, serialise, send.
 
 ``collect`` turns the local logs into contract records; ``deliver`` sends them
 through a sink and keeps the ledger in the state database.
@@ -15,14 +15,23 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from ai_usage_reporter.adapters import Adapter, DiscoveryContext, Registry
-from ai_usage_reporter.aggregate import aggregate
+from ai_usage_reporter.activity import Span, attribute_threads, deduplicate_thread_events
+from ai_usage_reporter.adapters import Adapter, DiscoveryContext, Registry, parse_all
+from ai_usage_reporter.aggregate import Activity, aggregate
 from ai_usage_reporter.config import Config
-from ai_usage_reporter.dedup import deduplicate
+from ai_usage_reporter.dedup import resolve
 from ai_usage_reporter.enrich import Enricher, GitInfo
 from ai_usage_reporter.longcontext import Thresholds
-from ai_usage_reporter.model import SourceBusyError, SourceFile, SourceSchemaError, TokenCounts, UsageEvent
+from ai_usage_reporter.model import (
+    SourceBusyError,
+    SourceFile,
+    SourceSchemaError,
+    ThreadEvent,
+    TokenCounts,
+    UsageEvent,
+)
 from ai_usage_reporter.record import (
+    ACTIVE_TIME_FIELDS,
     AGENT_LOG,
     OPTIONAL_FIELDS,
     ContractRecord,
@@ -47,6 +56,8 @@ AGENT_LOG_FALLBACK_ERRORS = frozenset({"not_found", "forbidden", "attribution_in
 #: After a server refused issue_ref_source "agent_log", it is left out for this long, then tried again.
 AGENT_LOG_RETRY_AFTER = timedelta(days=7)
 AGENT_LOG_META = "agent_log_unsupported"
+#: ``doctor`` shows the active time measured in this many most recent UTC days.
+MEASURED_DAYS = 7
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +87,12 @@ class SourceReport:
     schema_errors: list[str] = field(default_factory=list)
     #: What the adapter wants the person to know about the files it read.
     notes: list[str] = field(default_factory=list)
+    #: Thread events read for active time (after deduplication); 0: the source measures no time.
+    thread_events: int = 0
+    #: Active seconds of pieces no request owns (not sent), and the active seconds of the records
+    #: of the last :data:`MEASURED_DAYS` UTC days.
+    unplaced_seconds: float = 0.0
+    measured_seconds: float = 0.0
 
 
 @dataclass(slots=True)
@@ -104,10 +121,10 @@ def _excluded(cwd: str | None, prefixes: Sequence[str]) -> bool:
     return any(target == p or target.startswith(p.rstrip(os.sep) + os.sep) for p in prefixes)
 
 
-def _parse_file(adapter: Adapter, src: Any, report: SourceReport) -> list[UsageEvent] | None:
+def _parse_file(adapter: Adapter, src: Any, report: SourceReport) -> list[UsageEvent | ThreadEvent] | None:
     """The file's events, or ``None`` when it could not be read this time (it is not cached then)."""
     try:
-        return list(adapter.parse(src))
+        return list(parse_all(adapter, src))
     except SourceBusyError:
         report.busy_files += 1
         return None
@@ -126,7 +143,7 @@ def _read_sources(
     sources: Sequence[SourceFile],
     state: State | None,
     report: SourceReport,
-    out: list[UsageEvent],
+    out: list[UsageEvent | ThreadEvent],
 ) -> None:
     """Parse each source file (or reuse its cached events) into *out*."""
     for src in sources:
@@ -190,6 +207,7 @@ def collect(
     excluded = [_norm(str(Path(p).expanduser())) for p in config.exclude_paths]
     reports: dict[str, SourceReport] = {}
     events: list[UsageEvent] = []
+    activity: list[Activity] = []
     markers: list[UsageEvent] = []
     for name in names:
         adapter = registry.get(name)
@@ -202,7 +220,7 @@ def collect(
         sources = list(adapter.discover(ctx))
         report.roots = sorted({str(src.root) for src in sources})
         report.files = len(sources)
-        adapter_events: list[UsageEvent] = []
+        adapter_events: list[UsageEvent | ThreadEvent] = []
         # An adapter that keeps its own reading state (Hermes's counter snapshots) gets this run's state
         # database and instant for the time of its parses, and nothing outside them.
         bind = getattr(adapter, "bind_run", None)
@@ -215,13 +233,21 @@ def collect(
                 bind(None, None)
         if state is not None:
             state.forget_missing_files(name, {str(s.path) for s in sources})
-        adapter_usage, adapter_markers = split_markers(adapter_events)
+        thread_events = deduplicate_thread_events(e for e in adapter_events if isinstance(e, ThreadEvent))
+        adapter_usage, adapter_markers = split_markers(e for e in adapter_events if isinstance(e, UsageEvent))
         report.events = len(adapter_usage)
-        unique = deduplicate(adapter, adapter_usage)
-        report.after_dedup = len(unique)
-        kept = [e for e in unique if not _excluded(e.cwd, excluded)]
-        report.excluded = len(unique) - len(kept)
-        events.extend(kept)
+        report.thread_events = len(thread_events)
+        kept_indices, copy_of = resolve(adapter, adapter_usage)
+        owned = _owned_pieces(thread_events, adapter_usage, copy_of, report)
+        report.after_dedup = len(kept_indices)
+        kept = [i for i in kept_indices if not _excluded(adapter_usage[i].cwd, excluded)]
+        report.excluded = len(kept_indices) - len(kept)
+        for index in kept:
+            event = adapter_usage[index]
+            events.append(event)
+            pieces = owned.pieces.get(index)
+            measured = pieces is not None or (event.tool, event.session_id) in owned.sessions
+            activity.append(tuple(pieces or ()) if measured else None)
         markers.extend(m for m in adapter_markers if not _excluded(m.cwd, excluded))
     if selection.session is not None:
         wanted = selection.session
@@ -232,10 +258,16 @@ def collect(
             for e in events
             if wanted in (e.session_id, opaque_session_id(e.session_id), e.sub_session_id)
         }
-        events = [e for e in events if (e.tool, e.session_id) in chosen]
+        picked = [i for i, e in enumerate(events) if (e.tool, e.session_id) in chosen]
+        events = [events[i] for i in picked]
+        activity = [activity[i] for i in picked]
     oldest = (now - timedelta(days=max_age_days - 1)).date()
     issues = segment_issues(events, markers) if config.agent_log_issues else None
-    buckets = aggregate(events, thresholds, issues)
+    buckets = aggregate(events, thresholds, issues, activity)
+    recent = (now - timedelta(days=MEASURED_DAYS - 1)).date()
+    for bucket in buckets:
+        if bucket.tool in reports and bucket.usage_date >= recent:
+            reports[bucket.tool].measured_seconds += bucket.active_seconds
     too_old = sum(1 for b in buckets if b.usage_date < oldest)
     buckets = [b for b in buckets if b.usage_date >= oldest]
     if selection.since is not None:
@@ -262,6 +294,36 @@ def collect(
         records.extend(superseded_records(records, state))
         state.commit()
     return Collected(records=records, reports=reports, too_old=too_old, invalid=invalid)
+
+
+@dataclass(slots=True)
+class _Owned:
+    #: Index of a kept usage event -> the pieces it owns.
+    pieces: dict[int, list[Span]] = field(default_factory=dict)
+    #: The sessions (tool, session id) whose time was measured.
+    sessions: set[tuple[str, str]] = field(default_factory=set)
+
+
+def _owned_pieces(
+    thread_events: Sequence[ThreadEvent],
+    usage: Sequence[UsageEvent],
+    copy_of: Sequence[int | None],
+    report: SourceReport,
+) -> _Owned:
+    """The active time pieces of every thread, given to the kept copy of the request that owns each.
+
+    A piece owned by a request dropped as a copy goes with the copy that is
+    counted, wherever its tokens go; a request whose counted copy is not among
+    the events takes its pieces with it.
+    """
+    owned = attribute_threads(thread_events, usage)
+    result = _Owned(sessions=owned.measured_sessions)
+    report.unplaced_seconds += sum(owned.unplaced.values())
+    for index, pieces in owned.pieces.items():
+        target = copy_of[index]
+        if target is not None:
+            result.pieces.setdefault(target, []).extend(pieces)
+    return result
 
 
 def superseded_records(records: Sequence[ContractRecord], state: State) -> list[ContractRecord]:
@@ -305,9 +367,18 @@ def superseded_records(records: Sequence[ContractRecord], state: State) -> list[
                 unattended=payload.get("unattended") is True,
                 profile=payload.get("profile"),
                 route=payload.get("route"),
+                # A bucket sent with active time is cleared to zero time, like its tokens.
+                **_zero_active_time(payload),
             )
         )
     return out
+
+
+def _zero_active_time(payload: Mapping[str, Any]) -> dict[str, Any]:
+    version = payload.get("active_time_version")
+    if not all(name in payload for name in ACTIVE_TIME_FIELDS) or not isinstance(version, int):
+        return {}
+    return {"active_time_version": version, "active_seconds": 0, "active_spans": ()}
 
 
 @dataclass(slots=True)

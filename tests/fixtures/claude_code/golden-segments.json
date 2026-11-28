@@ -1,5 +1,17 @@
 [
   {
+    "active_seconds": 605,
+    "active_spans": [
+      [
+        "2026-10-05T08:00:00Z",
+        "2026-10-05T08:10:00Z"
+      ],
+      [
+        "2026-10-05T09:30:00Z",
+        "2026-10-05T09:30:05Z"
+      ]
+    ],
+    "active_time_version": 1,
     "attribution": {
       "git_branch": "main",
       "issue_ref": "ACME-12",
@@ -22,6 +34,14 @@
     "usage_date": "2026-10-05"
   },
   {
+    "active_seconds": 1,
+    "active_spans": [
+      [
+        "2026-10-05T13:00:00Z",
+        "2026-10-05T13:00:01Z"
+      ]
+    ],
+    "active_time_version": 1,
     "attribution": {
       "git_branch": "main",
       "issue_ref": "ACME-13",
@@ -44,6 +64,9 @@
     "usage_date": "2026-10-05"
   },
   {
+    "active_seconds": 0,
+    "active_spans": [],
+    "active_time_version": 1,
     "attribution": {
       "git_branch": "main",
       "issue_ref": "ACME-14",
@@ -66,6 +89,14 @@
     "usage_date": "2026-10-05"
   },
   {
+    "active_seconds": 60,
+    "active_spans": [
+      [
+        "2026-10-05T10:00:00Z",
+        "2026-10-05T10:01:00Z"
+      ]
+    ],
+    "active_time_version": 1,
     "attribution": {
       "git_branch": "main",
       "issue_ref": "ACME-20",
@@ -88,6 +119,14 @@
     "usage_date": "2026-10-05"
   },
   {
+    "active_seconds": 180,
+    "active_spans": [
+      [
+        "2026-10-05T11:00:00Z",
+        "2026-10-05T11:03:00Z"
+      ]
+    ],
+    "active_time_version": 1,
     "attribution": {
       "git_branch": "main"
     },

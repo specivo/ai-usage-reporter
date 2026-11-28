@@ -17,6 +17,13 @@ the record's usage is their sum (contract README, "Long-context tokens").
 buckets of one session, model and day, the one holding the day's earliest
 request is the **primary** one: it keeps the idempotency key a bucket without
 segments has, so a bucket sent before it was split is updated in place.
+
+**Active time.** When the requests come with the pieces of active time they
+own (see :mod:`ai_usage_reporter.activity`), a bucket sums their seconds
+(``active_seconds``, the agent time of all its threads) and keeps their union
+(``active_spans``, its wall clock). A bucket is *measured* when its session
+yielded thread events, even if none of its requests owns a piece; it then
+sends zero seconds and no spans.
 """
 
 from __future__ import annotations
@@ -27,6 +34,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 
+from ai_usage_reporter.activity import Span, merge_spans
 from ai_usage_reporter.model import TokenCounts, UsageEvent
 
 
@@ -62,6 +70,11 @@ class Bucket:
     #: The backend the requests went through, and how the tool says they were paid (the latest value wins).
     route: str | None = None
     cost_type: str | None = None
+    #: Whether the session's active time was measured, the summed seconds of the pieces its requests own,
+    #: and their union (merged, sorted).
+    active_measured: bool = False
+    active_seconds: float = 0.0
+    active_spans: list[Span] = field(default_factory=list)
 
     @property
     def reported_cost(self) -> tuple[Decimal, str] | None:
@@ -86,15 +99,27 @@ class Bucket:
 ThresholdLookup = Callable[[str], int | None]
 
 
+#: The active time pieces an event owns: ``None`` when its session was not measured.
+Activity = Sequence[Span] | None
+
+
 def aggregate(
     events: Iterable[UsageEvent],
     threshold_for: ThresholdLookup,
     issues: Sequence[str | None] | None = None,
+    activity: Sequence[Activity] | None = None,
 ) -> list[Bucket]:
-    """Buckets of *events*; *issues*, when given, holds each event's segment issue (same order)."""
-    pairs = list(zip(events, issues, strict=True)) if issues is not None else [(e, None) for e in events]
+    """Buckets of *events*.
+
+    *issues*, when given, holds each event's segment issue, and *activity* the
+    active time pieces each event owns (both in the order of *events*).
+    """
+    listed = list(events)
+    issue_list: Sequence[str | None] = issues if issues is not None else [None] * len(listed)
+    activity_list: Sequence[Activity] = activity if activity is not None else [None] * len(listed)
+    triples = list(zip(listed, issue_list, activity_list, strict=True))
     buckets: dict[tuple[str, str, str, date, str | None], Bucket] = {}
-    for event, issue in sorted(pairs, key=lambda pair: pair[0].timestamp):
+    for event, issue, owned in sorted(triples, key=lambda triple: triple[0].timestamp):
         when = event.timestamp.astimezone(UTC)
         key = (event.tool, event.session_id, event.model, when.date(), issue)
         bucket = buckets.get(key)
@@ -133,6 +158,12 @@ def aggregate(
         if event.cwd:
             bucket.cwds[event.cwd] += 1
         _add_cost(bucket, event)
+        if owned is not None:
+            bucket.active_measured = True
+            bucket.active_seconds += sum(end - start for start, end in owned)
+            bucket.active_spans.extend(owned)
+    for bucket in buckets.values():
+        bucket.active_spans = merge_spans(bucket.active_spans)
     _mark_primary(buckets.values())
     return sorted(buckets.values(), key=lambda b: (b.usage_date, b.tool, b.session_id, b.model, b.segment_issue or ""))
 

@@ -321,6 +321,52 @@ A Specivo server older than this feature refuses `agent_log`. The reporter then 
 records again without the issue, so the totals stay right, and leaves the issue out for the next
 seven days before trying again.
 
+## Active time
+
+Agents are bad at guessing how long they worked. The transcripts already hold a timestamp for
+every prompt, model answer and tool call, so the reporter measures the time instead and sends it
+with each record: `active_seconds` (how long the agent was busy) and `active_spans` (when, as
+start and end times to the second), with `active_time_version` naming the rules below.
+
+How it is measured (definition version 1; the numbers are fixed, not settings):
+
+- Each thread counts on its own: the main conversation and every subagent.
+- A tool call counts from its start to its result, up to 60 minutes, so a six minute test run is
+  six minutes of work although nothing is logged while it runs.
+- Any other gap between two lines of the transcript counts when it is 10 minutes or shorter
+  (the model thinking and writing); a longer one is a stall or a closed laptop and counts nothing.
+- Time between turns never counts: waiting for you to answer, for a background job to finish or
+  for a subagent to hand back. A prompt starts a turn, whether you typed it or it is such a
+  notification.
+- A question the agent asks you (`AskUserQuestion`, `ExitPlanMode`) counts nothing, however long
+  you take. A call you approved or refused by hand counts only through the 10 minute rule, so the
+  time the permission prompt stayed open is not counted. A parent's wait for a foreground subagent
+  is not a tool run: the subagent counts that time itself.
+- Each piece of time belongs to the model request it leads to (or, at the end of a turn, the one
+  before it), so it lands in that request's record: the same model, UTC day and issue as its
+  tokens. Time before a mark goes to the issue of the request after it, a piece is never cut at
+  midnight (spans may start a few minutes before the record's day), and duplicated or resumed
+  transcripts count once.
+- A record's `active_seconds` is the sum over its threads (two agents busy for ten minutes are
+  twenty minutes); `active_spans` is their union (ten minutes of wall clock). Specivo shows both.
+- A record of a measured session with no countable time sends `0` and no spans. More than 1000
+  spans in one record (rare) are merged where they lie less than a minute apart and the shortest
+  are then left out; the seconds stay exact.
+
+The three properties go only to a Specivo server that lists all three in its `optional_fields`
+(Specivo 0.16.0 or later); an older server gets the records without them. When a server starts
+listing them, the next push sends every record whose transcript still exists again, now with its
+time. Once sent, they keep being sent: a record sent again without them clears the stored time.
+
+| Tool | Active time |
+|---|---|
+| Claude Code | Yes, main thread and subagents |
+| Codex, Gemini CLI, OpenCode, Hermes, `import ccusage` | Not yet: their records carry no active time |
+
+`ai-usage doctor` shows, per source, the hours measured in the last 7 days and the seconds it could
+not give to any request (they are not sent). `active_time = false` in the config sends none of the
+three properties.
+
 ## Route and provider
 
 `route` names the backend the requests went through, as the tool names it: the ChatGPT login, a
@@ -518,8 +564,9 @@ your repositories in `[projects]` to get the precise reasons.
 - **Sent:** token counts, request counts, the tool, its version, the provider and model, the
   tool's session id, the bucket's UTC day and first and last request time, the git branch, the
   repository as `host/owner/repo`, commit SHAs, the issue from `SPECIVO_ISSUE` or the issue key
-  the agent marked with its Specivo tool calls, the project key from your mapping, cost hints and
-  `on_behalf_of`.
+  the agent marked with its Specivo tool calls, the project key from your mapping, cost hints,
+  `on_behalf_of`, and (unless `active_time = false`) the agent's active seconds and the
+  second-precision spans of when the agent was active.
 - **Never sent, printed or logged:** prompts, responses, code, tool input and output, file paths,
   working directories, file names, remote URLs with credentials.
 - The record sent is built from an allowlist and checked field by field against the contract.
@@ -558,6 +605,7 @@ your repositories in `[projects]` to get the precise reasons.
 | `on_behalf_of` | The login usage is reported for (service accounts) |
 | `git_commits` | Add SHAs of your commits made during the session (default `true`; needs `git_enrichment`) |
 | `agent_log_issues` | Split long sessions by the issues the agent marked with its Specivo tool calls and send them (default `true`); see [Long sessions on several issues](#long-sessions-on-several-issues) |
+| `active_time` | Send the measured active time of each record (seconds and spans, default `true`); see [Active time](#active-time) |
 | `exclude_paths` | Sessions that ran in these directories are never reported |
 | `[sources.<name>]` | `enabled = false` turns a source off; `roots = [...]` reads other directories; `via = "ccusage"` counts the tool through `import ccusage` instead of its logs; `project = "KEY"` is the tool's project when no `[projects]` repository pattern matches (for example sessions outside any git repository) |
 | `[[cost_rules]]` | `tool`, `model`, `repo`, `route`, `cwd` (patterns) → `cost_type`, `subscription_hint`, `billing_account`; the first match wins. See [Costs](#costs) |

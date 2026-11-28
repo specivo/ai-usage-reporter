@@ -41,6 +41,7 @@ class Adapter(Protocol):
     def dedup_key(self, event: UsageEvent) -> str | None: ...
     # optional
     def hook(self) -> HookSpec: ...
+    def parse_events(self, src: SourceFile) -> Iterator[UsageEvent | ThreadEvent]: ...
 ```
 
 - [ ] `discover` uses `ctx.home`, `ctx.env` and `ctx.roots` only, never `Path.home()` or
@@ -69,6 +70,16 @@ class Adapter(Protocol):
       (`issue_mark` set, no tokens, `requests=0`) for each marking Specivo call, using
       `ai_usage_reporter.issue_marks.marking_call` and `created_issue`; read nothing else of the
       call. A subagent with a transcript of its own sets `thread` on its usage and markers.
+- [ ] When the log has a timestamp for prompts, model output and tool calls, add
+      `parse_events(src)`: it yields the same usage events as `parse` and, from the same pass,
+      `ThreadEvent`s (`prompt`, `model`, `tool_start`, `tool_end`, `turn_end`; see
+      `ai_usage_reporter.activity` for the definition). Give each event a `key` that is the same
+      for a replayed copy of its line, the `thread_id` that matches the usage events of its
+      thread, and the flags for tools that wait for a person (`human_wait`), calls that wait for a
+      child thread (`subagent_wait`) and calls a person approved or rejected by hand
+      (`user_decided`). Read only timestamps, ids, the tool's name and the permission decision's
+      source for this, never tool input or output. Expected seconds in the fixtures are worked out
+      by hand in a comment.
 - [ ] Bump `parser_version` whenever parsing changes; the reporter then parses every file of the
       adapter again.
 
