@@ -127,6 +127,13 @@ class Collected:
     invalid: int = 0
     #: Work activity records (``specivo.agent-activity.v1``), sent after the usage records.
     activity: list[ActivityRecord] = field(default_factory=list)
+    #: How many of ``records`` (the last ones) are zeroed buckets a later split left behind.
+    superseded: int = 0
+
+    @property
+    def current_records(self) -> list[ContractRecord]:
+        """``records`` without the zeroed superseded buckets: the buckets of today's collection."""
+        return self.records[: len(self.records) - self.superseded]
 
 
 @dataclass(frozen=True, slots=True)
@@ -354,11 +361,16 @@ def collect(
         work = []
         for report in reports.values():
             report.notes.append("work activity could not be summarised this time (nothing of it is sent)")
+    superseded = 0
     if state is not None:
-        records.extend(superseded_records(records, state))
+        zeroed = superseded_records(records, state)
+        superseded = len(zeroed)
+        records.extend(zeroed)
         work.extend(superseded_activity(work, state))
         state.commit()
-    return Collected(records=records, reports=reports, too_old=too_old, invalid=invalid, activity=work)
+    return Collected(
+        records=records, reports=reports, too_old=too_old, invalid=invalid, activity=work, superseded=superseded
+    )
 
 
 def _work_parts(

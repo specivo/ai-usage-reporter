@@ -118,6 +118,11 @@ def total_seconds(spans: Iterable[Span]) -> float:
     return sum(end - start for start, end in spans)
 
 
+def union_seconds(spans: Iterable[Span]) -> float:
+    """The length of the union of *spans*: the wall clock of a scope whose threads' active sets they are."""
+    return total_seconds(merge_spans(spans))
+
+
 def timed_events(events: Iterable[ThreadEvent]) -> list[ThreadEvent]:
     """*events* without the ones that are no moment of work (a ``spawn`` note): active time never sees them."""
     return [e for e in events if e.kind != SPAWN]

@@ -374,6 +374,30 @@ the name of a collaboration tool). Never a command, an argument, an output or a 
 not give to any request (they are not sent). `active_time = false` in the config sends none of the
 three properties.
 
+### Check the measured time before pushing
+
+`ai-usage time` prints the measured time from your logs, per issue, without sending anything or
+asking the server:
+
+```bash
+ai-usage time                         # the last 7 UTC days, per issue
+ai-usage time --since 2026-11-01 --until 2026-11-15 --by day
+ai-usage time --by session --json     # durations in seconds
+```
+
+It collects as a push does (same sources, `exclude_paths`, deduplication and issue segments) and
+reads the numbers from the records a push would send, so they are the values Specivo gets. Each
+row shows the **wall clock** (the union of the agents' active intervals), the **agent time** (their
+sum: two agents busy for ten minutes are twenty minutes), the number of sessions, and the records
+that are **not measured** (sources without active time, see the table above; they count apart, not
+as zero). The total's wall clock is the union of everything, not the sum of the rows. `--by` takes
+`issue` (the issue the record names, else its project, else `(unassigned)`), `day` (UTC), `session`
+(the opaque session id as sent) or `tool`; `--source` limits it to one source.
+
+It shows issue and project keys, days, tool names and session ids, never a path, branch or prompt.
+With `active_time = false` it still measures (nothing leaves the machine) and says the values would
+not be sent; it also says so when the server took no active time at the last push.
+
 ## Work activity
 
 Specivo's Agents tab shows what an agent did in Specivo. The work itself (files read and edited,
@@ -753,6 +777,7 @@ your repositories in `[projects]` to get the precise reasons.
 | `Hermes schema changed, update the reporter` | Hermes changed `state.db` in a way this reporter cannot read; that database is skipped until you update the reporter (the other sources go on) |
 | `Hermes state.db schema vN is newer than ...` | A note only: the database is read by its columns. Update the reporter when a release covers that schema |
 | `Hermes usage counters went down` | Hermes repaired or reset a session's totals; their current values were counted as new usage |
+| The time an issue shows in Specivo looks wrong | Run `ai-usage time` (add `--by session` or `--by day`) to see the measured time the next push would send, before pushing |
 | A hook does not seem to run | Look at `hooks.log` in the state directory; run `ai-usage hooks install --tool <tool>` again after moving the reporter |
 
 ## Writing an adapter

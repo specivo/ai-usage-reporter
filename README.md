@@ -52,6 +52,7 @@ uv tool install "specivo-ai-usage-reporter[keyring,zstd] @ git+https://github.co
 
    ```bash
    ai-usage show-payload          # the exact JSON a push would send now; nothing is sent
+   ai-usage time                  # measured agent time per issue, from the local logs; nothing is sent
    ai-usage push                  # send new and changed usage
    ai-usage status                # what was sent, what waits for a retry, what was refused
    ai-usage doctor                # sources found, malformed lines, the server, last results
