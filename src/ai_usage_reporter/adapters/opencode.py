@@ -61,7 +61,30 @@ What the data looks like, and what this adapter does with it:
   kept parts in a table of their own, which is not read: its sessions are left
   to the server's match of MCP sessions.
 
-The database is opened read-only (``mode=ro``) and only for the time of two
+**Active time (full, OpenCode 2 only).** OpenCode 2 keeps every time the
+definition needs, in epoch milliseconds: a ``user`` row starts a turn
+(``prompt`` at ``time.created``), an ``idle`` row ends it (``turn_end``), an
+assistant message has ``time.created``, ``time.streamed`` and
+``time.completed`` (``model`` events), and each ``tool`` part has
+``time.created``, ``time.ran`` and ``time.completed``. A tool run is
+``tool_start`` at ``time.ran`` (when it began to execute, after any permission
+prompt; ``time.created`` when missing) to ``tool_end`` at ``time.completed``,
+paired by the part's ``id``; a part without an end (still running, or the
+session was killed) gives no end. A run a person refused
+(``state.error.type`` ``permission.rejected``) is flagged as decided by hand;
+OpenCode does not record approvals, but because the run starts at
+``time.ran`` the time a permission prompt stayed open is never part of a run
+(the gap rule decides it). The ``subagent`` tool (``task`` in older releases)
+blocks until its child session finishes, so it is a subagent wait; the
+``question`` tool waits for a person. A child session is its own thread,
+reported under the root as for tokens. :meth:`OpenCodeAdapter.parse_events`
+reads one more ``SELECT`` for the ``user`` and ``idle`` rows; only times, ids,
+part types, tool names and the error type are read for this. OpenCode 1
+tables and the JSON layout yield no thread events: their tool parts are kept
+apart and not read, and nothing marks the end of a turn. The adapter yields no
+work activity (its tool calls are not classified).
+
+The database is opened read-only (``mode=ro``) and only for the time of a few
 ``SELECT`` statements; the reporter never writes to it, never checkpoints its
 write-ahead log and never holds a lock. When OpenCode holds a lock, the reader
 retries for a moment and then leaves the database for the next run
@@ -83,13 +106,32 @@ from ai_usage_reporter.adapters import DiscoveryContext, HookSpec
 from ai_usage_reporter.adapters._jsonl import get_dict, get_str
 from ai_usage_reporter.adapters._routes import maker_of
 from ai_usage_reporter.issue_marks import CREATE, created_issue, marking_call
-from ai_usage_reporter.model import SourceBusyError, SourceFile, TokenCounts, UsageEvent, count, parse_timestamp
+from ai_usage_reporter.model import (
+    MODEL,
+    PROMPT,
+    TOOL_END,
+    TOOL_START,
+    TURN_END,
+    SourceBusyError,
+    SourceFile,
+    ThreadEvent,
+    TokenCounts,
+    UsageEvent,
+    count,
+    parse_timestamp,
+)
 
 #: How often and how long to wait for a database OpenCode holds locked.
 BUSY_ATTEMPTS = 3
 BUSY_WAIT_SECONDS = 0.25
 #: Parent links are followed at most this deep (and never round a cycle).
 MAX_DEPTH = 64
+
+#: Tools whose run is a person answering, and tools that block until a child session finishes.
+HUMAN_WAIT_TOOLS = frozenset({"question"})
+SUBAGENT_WAIT_TOOLS = frozenset({"subagent", "task"})
+#: A part's ``state.error.type`` when a person refused the call.
+PERMISSION_REJECTED = "permission.rejected"
 
 _DB_KIND = "db"
 _JSON_KIND = "json"
@@ -197,7 +239,9 @@ def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
 class OpenCodeAdapter:
     name = "opencode"
     provider = "unknown"
-    parser_version = "opencode/3"
+    parser_version = "opencode/4"
+    #: Thread events are for active time only: the tool calls are not classified for work activity.
+    work_activity = False
 
     def __init__(self, sleep: Callable[[float], None] = time.sleep) -> None:
         self._sleep = sleep
@@ -238,18 +282,45 @@ class OpenCodeAdapter:
         if hint.startswith(f"{_JSON_KIND}:"):
             yield from self._parse_json_message(src, hint)
         else:
-            yield from self._parse_database(src)
+            yield from (e for e in self._parse_database(src) if isinstance(e, UsageEvent))
 
-    def _parse_database(self, src: SourceFile) -> Iterator[UsageEvent]:
+    def parse_events(self, src: SourceFile) -> Iterator[UsageEvent | ThreadEvent]:
+        """The usage events of :meth:`parse` and, from an OpenCode 2 database, the thread events."""
+        hint = src.session_hint or ""
+        if hint.startswith(f"{_JSON_KIND}:"):
+            yield from self._parse_json_message(src, hint)
+        else:
+            yield from self._parse_database(src, with_turns=True)
+
+    def _parse_database(self, src: SourceFile, *, with_turns: bool = False) -> Iterator[UsageEvent | ThreadEvent]:
         conn = _open_read_only(src.path, self._sleep)
         try:
             sessions, rows = self._read_rows(conn)
+            turns = self._read_turn_rows(conn) if with_turns else []
         except sqlite3.OperationalError as exc:
             if _is_busy(exc):
                 raise SourceBusyError(src.path.name) from None
             raise
         finally:
             conn.close()
+        for turn_id, turn_session, kind, turn_created, turn_raw in turns:
+            try:
+                turn = json.loads(turn_raw) if isinstance(turn_raw, str | bytes) else None
+            except ValueError:
+                turn = None
+            when = parse_timestamp((get_dict(turn, "time") or {}).get("created") if isinstance(turn, dict) else None)
+            when = when or parse_timestamp(turn_created)
+            if when is None:
+                continue
+            top = root_of(turn_session, sessions)
+            yield ThreadEvent(
+                tool=self.name,
+                session_id=top,
+                thread_id=turn_session if turn_session != top else None,
+                timestamp=when,
+                kind=PROMPT if kind == "user" else TURN_END,
+                key=f"{turn_id}|{kind}",
+            )
         for message_id, session, created, raw in rows:
             src.stats.lines += 1
             try:
@@ -263,6 +334,61 @@ class OpenCodeAdapter:
             if event is not None:
                 yield event
             yield from self._marks(data, session, created, sessions)
+            # OpenCode 2 rows keep the role in their type column; OpenCode 1 rows have it in data.
+            if with_turns and message_id is not None and "role" not in data:
+                yield from self._thread_events(data, message_id, session, sessions)
+
+    def _thread_events(
+        self, data: dict[str, Any], message_id: str, session: str, sessions: Mapping[str, SessionInfo]
+    ) -> Iterator[ThreadEvent]:
+        """The model and tool events of one OpenCode 2 assistant message (see the module docs)."""
+        top = root_of(session, sessions)
+        thread = session if session != top else None
+
+        def event(when: object, kind: str, key: str, **flags: Any) -> ThreadEvent | None:
+            moment = parse_timestamp(when)
+            if moment is None:
+                return None
+            return ThreadEvent(
+                tool=self.name, session_id=top, thread_id=thread, timestamp=moment, kind=kind, key=key, **flags
+            )
+
+        times = get_dict(data, "time") or {}
+        found: list[ThreadEvent | None] = [
+            event(times.get(name), MODEL, f"{message_id}|{name}") for name in ("created", "streamed", "completed")
+        ]
+        parts = data.get("content")
+        for index, part in enumerate(parts if isinstance(parts, list) else []):
+            if not isinstance(part, dict) or part.get("type") != "tool":
+                continue
+            call = get_str(part, "id") or f"{message_id}#{index}"
+            name = get_str(part, "name") or get_str(part, "tool") or ""
+            state = get_dict(part, "state") or {}
+            error = get_dict(state, "error") or {}
+            flags = {
+                "human_wait": name in HUMAN_WAIT_TOOLS,
+                "subagent_wait": name in SUBAGENT_WAIT_TOOLS,
+                "user_decided": error.get("type") == PERMISSION_REJECTED,
+            }
+            part_times = get_dict(part, "time") or {}
+            start = part_times.get("ran") or part_times.get("created")
+            found.append(event(start, TOOL_START, f"{call}|start", call_id=call, **flags))
+            if state.get("status") in ("completed", "error"):
+                found.append(event(part_times.get("completed"), TOOL_END, f"{call}|end", call_id=call, **flags))
+        yield from (e for e in found if e is not None)
+
+    @staticmethod
+    def _read_turn_rows(conn: sqlite3.Connection) -> list[tuple[str, str, str, Any, Any]]:
+        """OpenCode 2's ``user`` and ``idle`` rows: the starts and ends of turns."""
+        tables = {str(r[0]) for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        if "session_message" not in tables:
+            return []
+        cols = _columns(conn, "session_message")
+        if not {"id", "session_id", "type", "data"} <= cols:
+            return []
+        created = "time_created" if "time_created" in cols else "NULL"
+        query = f"SELECT id, session_id, type, {created}, data FROM session_message WHERE type IN ('user', 'idle')"
+        return [(str(a), str(b), str(c), d, e) for a, b, c, d, e in conn.execute(query)]
 
     @staticmethod
     def _read_rows(

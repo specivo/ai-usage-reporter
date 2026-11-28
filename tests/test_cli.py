@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import io
 import json
-import shutil
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +11,7 @@ from ai_usage_reporter import cli
 from ai_usage_reporter import schedule as schedule_module
 from ai_usage_reporter.sinks.specivo import SpecivoSink
 from ai_usage_reporter.testing import validate_records
-from tests.conftest import FIXTURES, FakeServer, ok, result_item, usage_batch
+from tests.conftest import FakeServer, ok, result_item, usage_batch
 
 CANARIES = ("CANARY-PROMPT-5c1e", "CANARY-TOOL-OUTPUT-9d07", "CANARY-PATH-7f3a", "CANARY-SECRET-b2e4")
 
@@ -284,7 +283,7 @@ def test_doctor_after_a_push_has_nothing_to_send(
 CANARY_BRANCH = "CANARY-BRANCH-3e8a"
 SECOND_SESSION = "b8b8b8b8-0000-4000-8000-000000000002"
 THIRD_SESSION = "c9c9c9c9-0000-4000-8000-000000000003"
-TIME_RANGE = ["--since", "2026-10-04", "--until", "2026-10-06", "--no-git"]
+TIME_RANGE = ["--since", "2026-10-03", "--until", "2026-10-06", "--no-git"]
 
 
 def _mark(t: Any, when: str, done: str, issue: str, call: str) -> None:
@@ -328,14 +327,16 @@ def _time_home(home: Path) -> Path:
 
 @pytest.fixture
 def time_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A home with the three Claude Code sessions and the Gemini CLI fixtures (no active time)."""
+    """A home with the three Claude Code sessions and OpenCode's older JSON layout (no active time)."""
+    from tests.fixtures.opencode_home import _legacy_storage
+
     home = _time_home(tmp_path / "home")
-    gemini = tmp_path / "gemini"
-    shutil.copytree(FIXTURES / "gemini_cli" / "home" / ".gemini", gemini)
+    opencode = tmp_path / "opencode"
+    _legacy_storage(opencode / "storage")
     config = tmp_path / "cfg"
     config.mkdir()
     (config / "config.toml").write_text(
-        f'url = "https://specivo.example.com"\n\n[sources.gemini-cli]\nroots = ["{gemini.as_posix()}"]\n',
+        f'url = "https://specivo.example.com"\n\n[sources.opencode]\nroots = ["{opencode.as_posix()}"]\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("HOME", str(tmp_path / "empty-home"))
@@ -369,7 +370,7 @@ def test_time_by_issue_sums_agents_and_joins_the_wall_clock(time_env: Path, caps
         "unmeasured_records": 0,
     }
     assert groups["ACME-2"]["agent_seconds"] == 360 and groups["ACME-2"]["wall_clock_seconds"] == 300
-    # Gemini CLI yields no thread events: its records are "not measured", never zero.
+    # OpenCode's JSON layout yields no thread events: its records are "not measured", never zero.
     gemini = groups["(unassigned)"]
     assert gemini["agent_seconds"] is None and gemini["wall_clock_seconds"] is None
     assert gemini["unmeasured_records"] == gemini["records"] > 0
@@ -377,7 +378,7 @@ def test_time_by_issue_sums_agents_and_joins_the_wall_clock(time_env: Path, caps
     assert total["agent_seconds"] == 720 and total["wall_clock_seconds"] == 420
     assert total["unmeasured_records"] == gemini["records"]
     assert report["by"] == "issue" and report["would_send"] is True
-    assert (report["since"], report["until"]) == ("2026-10-04", "2026-10-06")
+    assert (report["since"], report["until"]) == ("2026-10-03", "2026-10-06")
 
 
 def test_time_matches_the_records_a_dry_run_sends(time_env: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -391,7 +392,7 @@ def test_time_by_day_session_and_tool(time_env: Path, capsys: pytest.CaptureFixt
     from tests.fixtures.active_time_home import SESSION
 
     days = _time_json(capsys, "--by", "day")["groups"]
-    assert [g["key"] for g in days] == ["2026-10-04", "2026-10-05", "2026-10-06"]
+    assert [g["key"] for g in days] == ["2026-10-03", "2026-10-05"]
     assert days[1]["agent_seconds"] == 720 and days[1]["wall_clock_seconds"] == 420
     assert days[0]["agent_seconds"] is None and days[0]["unmeasured_records"] > 0
 
@@ -400,11 +401,11 @@ def test_time_by_day_session_and_tool(time_env: Path, capsys: pytest.CaptureFixt
     assert sessions[("claude-code", SESSION)]["wall_clock_seconds"] == 360
     assert sessions[("claude-code", SECOND_SESSION)]["agent_seconds"] == 300
     assert sessions[("claude-code", THIRD_SESSION)]["agent_seconds"] == 60
-    assert {tool for tool, _ in sessions} == {"claude-code", "gemini-cli"}
+    assert {tool for tool, _ in sessions} == {"claude-code", "opencode"}
 
     tools = {g["key"]: g for g in _time_json(capsys, "--by", "tool")["groups"]}
     assert tools["claude-code"]["agent_seconds"] == 720 and tools["claude-code"]["sessions"] == 3
-    assert tools["gemini-cli"]["agent_seconds"] is None
+    assert tools["opencode"]["agent_seconds"] is None
 
 
 def test_time_prints_a_table_with_a_total_row(time_env: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -417,7 +418,7 @@ def test_time_prints_a_table_with_a_total_row(time_env: Path, capsys: pytest.Cap
     assert rows["ACME-2"].split()[1:] == ["5", "min", "6", "min", "2", "0"]
     assert rows["(unassigned)"].split()[1:3] == ["-", "-"]
     assert lines[-1].split()[:5] == ["total", "7", "min", "12", "min"]
-    assert "2026-10-04 to 2026-10-06" in err
+    assert "2026-10-03 to 2026-10-06" in err
     _no_canaries(out + err)
     assert CANARY_BRANCH not in out + err and "/work/" not in out + err
 

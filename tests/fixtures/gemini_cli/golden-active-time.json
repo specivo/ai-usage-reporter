@@ -1,0 +1,31 @@
+[
+  {
+    "active_seconds": 545,
+    "active_spans": [
+      [
+        "2026-11-05T09:00:00Z",
+        "2026-11-05T09:08:00Z"
+      ],
+      [
+        "2026-11-05T09:21:00Z",
+        "2026-11-05T09:21:05Z"
+      ]
+    ],
+    "active_time_version": 1,
+    "ended_at": "2026-11-05T09:21:05Z",
+    "idempotency_key": "f6661d55fff06d1e358f4f3747d59e3421b6792a75c980643fd46a8939a738cf",
+    "model": "gemini-2.5-pro",
+    "provider": "google",
+    "request_count": 6,
+    "session_id": "7e7e7e7e-0000-4000-8000-000000000001",
+    "started_at": "2026-11-05T09:00:04Z",
+    "tokens": {
+      "cache_read": 600,
+      "input": 2400,
+      "output": 300,
+      "reasoning": 60
+    },
+    "tool": "gemini-cli",
+    "usage_date": "2026-11-05"
+  }
+]

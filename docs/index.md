@@ -22,9 +22,9 @@ the AI usage ingest contract `specivo.ai-usage.v1`, so it needs Specivo 0.13.0 o
 |---|---|---|
 | Claude Code (`claude-code`) | `~/.claude/projects/` and `~/.config/claude/projects/`; `CLAUDE_CONFIG_DIR` moves them | Subagent work counts in the parent session; repeated copies of a response count once |
 | Codex CLI (`codex`) | `~/.codex/sessions/` and `~/.codex/archived_sessions/`; `CODEX_HOME` moves them | Active rollouts win over archived copies; compressed rollouts need the `zstd` extra before Python 3.14; a subagent's rollout counts in its parent session (the copy of the parent's history it starts with is skipped) |
-| Gemini CLI (`gemini-cli`) | `~/.gemini/tmp/<project>/chats/` (and `~/.cache/.gemini` under the macOS sandbox), JSON and JSONL recordings | Cached prompt tokens are reported as cache reads, thoughts as reasoning; subagents count in their parent session |
-| OpenCode (`opencode`) | `opencode.db` in `~/.local/share/opencode/` (`XDG_DATA_HOME` and `OPENCODE_DB` move it), and the older `storage/` JSON files | Read-only, never locked; child sessions count in their root session; OpenCode's cost is sent as the reported cost |
-| Hermes Agent (`hermes`) | `state.db` in `~/.hermes/` and in each `~/.hermes/profiles/<name>/` (`HERMES_HOME` moves it) | Read-only; running totals read as growth since the last push; child sessions count in their root session; see [Hermes Agent](#hermes-agent) |
+| Gemini CLI (`gemini-cli`) | `~/.gemini/tmp/<project>/chats/` (and `~/.cache/.gemini` under the macOS sandbox), JSON and JSONL recordings | Cached prompt tokens are reported as cache reads, thoughts as reasoning; subagents count in their parent session; active time is coarse (see [Active time](#active-time)) |
+| OpenCode (`opencode`) | `opencode.db` in `~/.local/share/opencode/` (`XDG_DATA_HOME` and `OPENCODE_DB` move it), and the older `storage/` JSON files | Read-only, never locked; child sessions count in their root session; OpenCode's cost is sent as the reported cost; active time from OpenCode 2 databases |
+| Hermes Agent (`hermes`) | `state.db` in `~/.hermes/` and in each `~/.hermes/profiles/<name>/` (`HERMES_HOME` moves it) | Read-only; running totals read as growth since the last push; child sessions count in their root session; no active time; see [Hermes Agent](#hermes-agent) |
 | Others, through [ccusage](https://ccusage.com) | the JSON of `ccusage daily --by-agent --json` | Day totals per tool and model; see [Import ccusage](#import-ccusage) |
 
 More tools can be added as plugins (see [Writing an adapter](#writing-an-adapter)).
@@ -363,12 +363,17 @@ time. Once sent, they keep being sent: a record sent again without them clears t
 |---|---|
 | Claude Code | Yes, main thread and subagents |
 | Codex | Yes, main thread and subagents, from rollouts written since September 2026 (they log each item, a reasoning step, a message or a tool call, with its start and end); older rollouts carry no active time |
-| Gemini CLI, OpenCode, Hermes, `import ccusage` | Not yet: their records carry no active time |
+| OpenCode | Yes, main session and child sessions, from the OpenCode 2 database: prompts, idle (turn end), each message's start, streaming and end, each tool call from the moment it began to run to its end. A refused call counts only through the 10 minute rule; `question` waits for you and counts nothing; `subagent` waits for its child session, which counts itself. The OpenCode 1 tables and the older JSON files carry no active time |
+| Gemini CLI | Coarse, main session and subagents: the recording has a time for each prompt, answer and thought summary but none for tool calls or turn ends, so only the 10 minute rule applies. A tool that runs longer than 10 minutes counts nothing, and the time spent writing a turn's last answer is not seen |
+| Hermes | No. Hermes keeps running token totals per session and model, not one row per request, so there is no request for each piece of time to belong to (time must land where its tokens land). Its messages do have times; the reporter does not use them |
+| `import ccusage` | No: day totals only |
 
 What is read for it: Claude Code's prompts, answers, tool calls and results (their times, ids, the
 tool's name and whether a person approved the call); Codex's turn starts and ends
 (`task_started`, `task_complete`, `turn_aborted`) and completed items (their times, ids and type, and
-the name of a collaboration tool). Never a command, an argument, an output or a message.
+the name of a collaboration tool); OpenCode's message and part times, ids, types, tool names and
+error type; Gemini CLI's message and thought times, ids and types. Never a command, an argument, an
+output or a message.
 
 `ai-usage doctor` shows, per source, the hours measured in the last 7 days and the seconds it could
 not give to any request (they are not sent). `active_time = false` in the config sends none of the
@@ -501,7 +506,7 @@ level is never built (Specivo rejects a record that has one).
 |---|---|
 | Claude Code | Yes, main thread and subagents |
 | Codex | Yes, main thread and subagents, from rollouts written since September 2026 |
-| Gemini CLI, OpenCode, Hermes, `import ccusage` | Not yet |
+| Gemini CLI, OpenCode, Hermes, `import ccusage` | Not yet (Gemini CLI and OpenCode are measured for active time, but their tool calls are not summarised) |
 
 ## Route and provider
 
