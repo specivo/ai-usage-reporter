@@ -67,7 +67,9 @@ What the rollout format looks like, and what this adapter does with it:
   rollout starts with a copy of the parent's history (its own
   ``session_meta``, then the parent's, the parent's turns and calls), and
   every line before ``subagent_history_start_ordinal`` (by the line's
-  ``ordinal``) is that copy and is skipped.
+  ``ordinal``) is that copy and is skipped. The copied turns keep the parent's
+  times, so a subagent's thread events from before its own ``session_meta``
+  line (less two seconds) are dropped as well, for a copy without that ordinal.
 - **Active time.** :meth:`CodexAdapter.parse_events` also yields the thread
   events :mod:`ai_usage_reporter.activity` measures, from rollouts that have
   ``item_completed`` lines (written since September 2026); older rollouts
@@ -242,6 +244,8 @@ class CodexAdapter:
         #: Thread events wait for the end of the file: only a rollout with items yields them.
         thread_events: list[ThreadEvent] = []
         has_items = False
+        #: A subagent's rollout starts when its first session_meta was written: anything earlier is copied.
+        child_start: datetime | None = None
         for line in iter_json_lines(src.path, src.stats):
             kind = line.get("type")
             payload = line.get("payload")
@@ -265,6 +269,7 @@ class CodexAdapter:
                     root = get_str(payload, "session_id")
                     session = (root if root and root.lower() != own else parent).lower()
                     child = own
+                    child_start = parse_timestamp(line.get("timestamp"))
                     start = payload.get("subagent_history_start_ordinal")
                     if isinstance(start, int) and not isinstance(start, bool):
                         history_start = start
@@ -356,6 +361,11 @@ class CodexAdapter:
         if not has_items:
             return  # an older rollout: its turns alone cannot be measured
         # Items are logged when they complete: put every event at its own time (sorted() is stable).
+        if child_start is not None:
+            # Belt and braces for a copy without subagent_history_start_ordinal: the copied turns keep the
+            # parent's (earlier) times, so they lie before the subagent started.
+            floor = child_start - _SAME_MOMENT
+            thread_events = [e for e in thread_events if e.timestamp >= floor]
         for thread_event in sorted(thread_events, key=lambda e: e.timestamp):
             src.stats.thread_events += 1
             yield thread_event

@@ -431,3 +431,15 @@ def test_a_copied_rollout_adds_no_time(tmp_path: Path) -> None:
     shutil.copy2(path, archived / path.name)
     assert wires(home) == before
     assert any(r["session_id"] == opaque_session_id(PARENT) for r in before)
+
+
+def test_a_copied_history_without_its_ordinal_adds_no_time_to_the_child(tmp_path: Path) -> None:
+    # Without subagent_history_start_ordinal the copied parent turns (12:50:00..12:50:31 and 12:55:00..12:55:10,
+    # at the parent's times) are read, but they lie before the child started at 13:01:00 and are dropped.
+    parent, unmarked, _marked = codex_time_home.session_with_subagents(tmp_path)
+    del unmarked.lines[0]["payload"]["subagent_history_start_ordinal"]
+    unmarked.write(tmp_path)
+    own = [e for e in thread_events(tmp_path) if e.thread_id == CHILD_UNMARKED]
+    assert min(e.timestamp for e in own) == at("13:01:00")
+    # Every second as with the ordinal (the copied old-form mark may then move the child to ACME-99).
+    assert sum(r["active_seconds"] for r in wires(tmp_path)) == 41 + 22 + 252 + 62
