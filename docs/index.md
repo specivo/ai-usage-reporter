@@ -443,11 +443,11 @@ level = "counts"            # off | counts | names | commits
 | `counts` (default) | The fields above: counts, durations, line totals, the labelled timeline. No names of anything |
 | `names`, `commits` | Accepted, but not built yet: such sessions send `counts` records. A later release adds command names, repository-relative paths, MCP server names and subagent types (`names`), and commit SHAs and subjects (`commits`) |
 
-A session whose repository is unknown never gets more than `counts`. The repository is the one
-the usage record names (`host/owner/repo`, from git or the tool's log). With git enrichment off,
-Claude Code sessions have no known repository, so no `[activity.repos]` pattern matches them and
-the global level applies: hold a client's folders back with `level = "off"` or `exclude_paths`
-then. Switching a repository to `off` stops sending its activity; what was sent before stays in
+The repository is the one the usage records of the group name (`host/owner/repo`, from git or the
+tool's log); when they name several, the lowest level wins. A session whose repository is unknown
+(git enrichment off, no remote, no git) could be any of them, so it gets the lowest of the global
+level, `counts` and every level in `[activity.repos]`: one `"off"` pattern holds back every session
+without a known repository. Switching a repository to `off` stops sending its activity; what was sent before stays in
 Specivo.
 
 **Never sent at any level:** prompts, model output, file contents, diffs, command arguments,
@@ -727,7 +727,7 @@ your repositories in `[projects]` to get the precise reasons.
 | `active_time` | Send the measured active time of each record (seconds and spans, default `true`); see [Active time](#active-time) |
 | `exclude_paths` | Sessions that ran in these directories are never reported |
 | `[activity]` | `level = "counts"` (default), `"off"`, `"names"` or `"commits"` (the last two send `counts` for now): how much work activity to send; see [Work activity](#work-activity) |
-| `[activity.repos]` | Repository pattern (as in `[projects]`) → work activity level; the first match wins. A session without a known repository gets at most `counts` |
+| `[activity.repos]` | Repository pattern (as in `[projects]`) → work activity level; the first match wins. A session without a known repository gets the lowest of `level`, `counts` and every level listed here |
 | `[sources.<name>]` | `enabled = false` turns a source off; `roots = [...]` reads other directories; `via = "ccusage"` counts the tool through `import ccusage` instead of its logs; `project = "KEY"` is the tool's project when no `[projects]` repository pattern matches (for example sessions outside any git repository) |
 | `[[cost_rules]]` | `tool`, `model`, `repo`, `route`, `cwd` (patterns) → `cost_type`, `subscription_hint`, `billing_account`; the first match wins. See [Costs](#costs) |
 | `[projects]` | Repository pattern (`host/owner/repo`, `*` matches `/` too) → Specivo project key; map every repository you work in, see [Keep other work out of Specivo issues](#keep-other-work-out-of-specivo-issues) |

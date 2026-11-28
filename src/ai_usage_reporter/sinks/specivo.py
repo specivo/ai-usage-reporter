@@ -290,13 +290,16 @@ class SpecivoSink:
         self._activity_asked = True
         if not isinstance(data, dict):
             return None
-        info = ActivityInfo(
-            versions=[str(v) for v in data.get("versions") or []],
-            max_records=int(data.get("max_records") or DEFAULT_MAX_RECORDS),
-            max_bytes=int(data.get("max_bytes") or DEFAULT_MAX_BYTES),
-            levels=[str(v) for v in data.get("levels") or []],
-            categories=[str(v) for v in data.get("categories") or []],
-        )
+        try:
+            info = ActivityInfo(
+                versions=[str(v) for v in data.get("versions") or []],
+                max_records=max(1, int(data.get("max_records") or DEFAULT_MAX_RECORDS)),
+                max_bytes=max(1, int(data.get("max_bytes") or DEFAULT_MAX_BYTES)),
+                levels=[str(v) for v in data.get("levels") or []],
+                categories=[str(v) for v in data.get("categories") or []],
+            )
+        except (TypeError, ValueError):
+            raise SinkError("the server's answer about work activity is malformed") from None
         # A server that does not list the version (or the counts level) takes nothing of what this reporter sends.
         self._activity_info = info if ACTIVITY_SCHEMA in info.versions and "counts" in info.levels else None
         return self._activity_info

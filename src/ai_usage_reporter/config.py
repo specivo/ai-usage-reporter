@@ -243,15 +243,16 @@ class Config:
         """The configured work activity level of a session in *repo* (``host/owner/repo``, ``None``: unknown).
 
         The first ``[activity.repos]`` pattern matching the repository wins (patterns match as in
-        ``[projects]``), else ``[activity] level``. A session whose repository is unknown never gets more
-        than ``counts``.
+        ``[projects]``), else ``[activity] level``. A session whose repository is unknown (no git, no
+        remote, git enrichment off) could be in any of the listed repositories, so it gets the lowest of
+        the global level, ``counts`` and every pattern's level: one ``"off"`` pattern holds it back.
         """
         if repo is not None:
             for pattern, level in self.activity_repos.items():
                 if fnmatchcase(repo.lower(), pattern.lower()):
                     return level
             return self.activity_level
-        return lowest_level(self.activity_level, COUNTS)
+        return lowest_level(self.activity_level, COUNTS, *self.activity_repos.values())
 
     def activity_sent_level(self, repo: str | None) -> str:
         """The level records of a session in *repo* are built at: the configured one, at most what is built."""
@@ -499,7 +500,7 @@ exclude_paths = []
 level = "counts"
 
 # Repository (host/owner/repo, patterns allowed) -> level; the first match wins. A session whose
-# repository is unknown never gets more than "counts".
+# repository is unknown gets the lowest of level, "counts" and every level listed here.
 [activity.repos]
 # "github.com/client-x/*" = "off"
 """

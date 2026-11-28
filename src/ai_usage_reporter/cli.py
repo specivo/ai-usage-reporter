@@ -624,7 +624,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 def _print_activity_settings(config: Config, collected: Collected, args: argparse.Namespace) -> int:
     """The work activity level, per repository pattern and per source (for doctor); returns 0 (notes only)."""
-    print(f"work activity: level {config.activity_level} (sessions without a known repository: at most counts)")
+    unknown = config.activity_level_for(None)
+    print(f"work activity: level {config.activity_level} (sessions without a known repository: {unknown})")
     for pattern, level in config.activity_repos.items():
         print(f"  repositories {pattern}: {level}")
     configured = {config.activity_level, *config.activity_repos.values()}
@@ -637,8 +638,7 @@ def _print_activity_settings(config: Config, collected: Collected, args: argpars
     if config.activity_repos and (getattr(args, "no_git", False) or not config.git_enrichment):
         print(
             "  note: git enrichment is off, so sessions of tools that do not log their repository (Claude Code)"
-            " match no [activity.repos] pattern and get the global level (at most counts); use exclude_paths"
-            ' or level = "off" to keep them out'
+            f" have no known repository and get {unknown}"
         )
     for report in collected.reports.values():
         if report.activity_records or report.activity_off:

@@ -111,8 +111,8 @@ What the rollout format looks like, and what this adapter does with it:
     ``content``'s lines, an ``update`` the ``+`` and ``-`` lines of its
     ``unified_diff``, a ``delete`` none) and the file as a local hash of its path;
   - a ``SubAgentActivity`` of ``kind`` ``started`` is a subagent the thread
-    started (a ``spawn`` note, which active time ignores), as is a collaboration
-    call whose tool name contains ``spawn``. An event is named by its ``turn_id`` and ``item.id``, so a copied line
+    started (a ``spawn`` note, which active time ignores); it is the only source
+    of spawns, so a subagent is counted once. An event is named by its ``turn_id`` and ``item.id``, so a copied line
   counts once. Only timestamps, ids, the item's type and the collaboration
   tool's name are read for this; no command, argument, output or message.
 """
@@ -201,7 +201,7 @@ def item_category(item_type: str, item: dict[str, object]) -> str:
     return ITEM_CATEGORIES.get(item_type, "other")
 
 
-def item_detail(item_type: str, item: dict[str, object]) -> dict[str, object]:
+def item_detail(item_type: str, item: dict[str, object]) -> dict[str, Any]:
     """Failure, lines and hashed files of a completed tool item (see the module docs); nothing else is kept."""
     status = item.get("status")
     if item_type == "CommandExecution":
@@ -229,10 +229,13 @@ def item_detail(item_type: str, item: dict[str, object]) -> dict[str, object]:
         if not isinstance(change, dict):
             continue
         kind = change.get("type") or change.get("kind")
+        if isinstance(kind, dict):
+            kind = kind.get("type")
+        diff = change.get("unified_diff") if isinstance(change.get("unified_diff"), str) else change.get("diff")
         if kind == "add" and isinstance(change.get("content"), str):
             added += text_lines(str(change["content"]))
-        elif kind == "update" and isinstance(change.get("unified_diff"), str):
-            plus, minus = unified_diff_lines(str(change["unified_diff"]))
+        elif kind == "update" and isinstance(diff, str):
+            plus, minus = unified_diff_lines(diff)
             added, removed = added + plus, removed + minus
         if isinstance(path, str) and path:
             files.append(file_identity(path))
@@ -520,7 +523,6 @@ class CodexAdapter:
             "subagent_wait": item_type == "CollabAgentToolCall" and tool == SUBAGENT_WAIT_TOOL,
         }
         category = "other" if human_wait else item_category(item_type, item)
-        spawns = item_type == "CollabAgentToolCall" and bool(tool and "spawn" in tool.lower())
         detail = item_detail(item_type, item)
         for when, name in ((started, TOOL_START), (completed, TOOL_END)):
             if when is not None:
@@ -533,7 +535,7 @@ class CodexAdapter:
                     key=f"{turn}|{item_id}|{name}",
                     category=category,
                     # The run's detail goes on one event of the pair, so it is counted once.
-                    **(detail if name == TOOL_END else {"spawns": spawns}),
+                    **(detail if name == TOOL_END else {}),
                     **flags,
                 )
 

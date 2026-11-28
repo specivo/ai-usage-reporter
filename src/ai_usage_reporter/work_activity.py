@@ -199,9 +199,11 @@ def _classify_words(words: Sequence[str], depth: int) -> str:
         if base in RUN_WRAPPERS and rest and rest[0] in RUN_WRAPPERS[base]:
             index = _skip_options(words, index + 2)
             continue
-        if PYTHONS.match(base) and len(rest) >= 2 and rest[0] == "-m":
-            index += 2  # python -m pytest: the module is the program
-            continue
+        if PYTHONS.match(base) and "-m" in rest:
+            flag = rest.index("-m")
+            if all(w.startswith("-") for w in rest[:flag]) and flag + 1 < len(rest):
+                index += flag + 2  # python [-u] -m pytest: the module is the program
+                continue
         if base in SHELLS and depth < _MAX_DEPTH:
             script = _shell_script(rest)
             if script is not None:

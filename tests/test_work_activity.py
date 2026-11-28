@@ -99,6 +99,25 @@ def test_classify_argv_looks_into_a_shell_script() -> None:
     assert classify_argv(["/bin/zsh", "-lc", "git log -1"]) == "git"
     assert classify_argv(["/bin/zsh", "-lc", "rg pattern"]) == "shell"
     assert classify_argv(["pytest"]) == "test"
+    assert classify_command("python -u -m pytest") == "test" and classify_command("python -c 'x' -m y") == "shell"
+
+
+def test_codex_counts_a_spawn_once_and_reads_both_change_shapes(tmp_path: Path) -> None:
+    from tests.fixtures.codex_time_home import Rollout
+
+    r = Rollout(fx.CODEX_SESSION).meta("13:59:59").prompt("14:00:00")
+    r.wait("14:00:01", "14:00:02", tool="spawn_agent")
+    r.item("14:00:02", "14:00:02", "SubAgentActivity", kind="started", agent_thread_id=fx.CODEX_CHILD)
+    changes = [
+        {"path": fx.SOURCE, "kind": {"type": "update"}, "diff": "@@ -1 +1,2 @@\n-a\n+b\n+c\n"},
+        {"path": fx.NEW_FILE, "kind": {"type": "add"}, "content": "x\ny\n"},
+    ]
+    r.item("14:00:03", "14:00:04", "FileChange", changes=changes, status="completed")
+    r.usage("14:00:05").end("14:00:06")
+    r.write(tmp_path / "home")
+    (wire,) = [a.to_wire() for a in _collect(tmp_path / "home", CodexAdapter()).activity]
+    assert wire["subagents_spawned"] == 1
+    assert (wire["files_changed"], wire["lines_added"], wire["lines_removed"]) == (2, 4, 1)
 
 
 def test_line_counts() -> None:
@@ -412,8 +431,12 @@ def test_config_levels() -> None:
     assert config.activity_level_for("github.com/client/app") == "off"
     assert config.activity_level_for("github.com/acme/app") == "counts"
     assert config.activity_level_for("github.com/other/app") == "names"
-    # Unknown repository: at most counts. Higher configured levels send counts (not built yet).
-    assert config.activity_level_for(None) == "counts"
+    # Unknown repository: it could be any of them, so one "off" pattern holds it back.
+    assert config.activity_level_for(None) == "off"
+    assert parse_config({"activity": {"level": "names", "repos": {"x/*": "commits"}}}).activity_level_for(None) == (
+        "counts"
+    )
+    # Higher configured levels send counts (not built yet).
     assert config.activity_sent_level("github.com/other/app") == "counts"
     assert parse_config({"activity": {"level": "off"}}).activity_sent_level(None) == "off"
     assert Config().activity_sent_level(None) == "counts"
@@ -573,6 +596,24 @@ def test_retries_usage_not_found_and_internal_error_but_not_invalid_records(tmp_
         assert state.activity_status_counts() == {"sent": 2, "rejected": 1}
 
 
+def test_a_malformed_activity_answer_never_fails_the_push(tmp_path: Path) -> None:
+    server = Server(activity_info={**ACTIVITY_INFO, "max_records": "many"})
+    with State.in_memory() as state:
+        summary = _pushed(fx.build_claude(tmp_path / "home"), server, state)
+    assert summary.error and summary.sent == 0 and server.usage_posts
+
+
+def test_activity_of_a_usage_record_waiting_to_be_updated_is_not_held_back(tmp_path: Path) -> None:
+    home = fx.build_claude(tmp_path / "home")
+    server = Server()
+    with State.in_memory() as state:
+        collected = _collect(home, ClaudeCodeAdapter(), state=state)
+        deliver(collected.records, server.sink(), state)
+        for row in state.buckets():  # accepted before (entry id kept), now waiting for a retry
+            state.save_bucket(row.payload, "changed", "pending", error_code="internal_error")
+        assert deliver_activity(collected.activity, server.sink(), state).sent == 3
+
+
 def test_activity_waits_for_its_usage_record(tmp_path: Path) -> None:
     home = fx.build_claude(tmp_path / "home")
     server = Server()
@@ -688,9 +729,11 @@ def test_doctor_shows_levels_and_the_server(
     out, _ = capsys.readouterr()
     assert "work activity: level names" in out and "repositories github.com/acme/*: off" in out
     assert "level names is not built yet" in out and "git enrichment is off" in out
-    # Codex logs its repository (held off by the pattern); Claude Code's is unknown here (at most counts).
-    assert "claude-code: 3 records at counts, 0 left out" in out and "codex: 0 records at counts, 1 left out" in out
-    assert f"work activity: takes {ACTIVITY_SCHEMA}" in out and "work activity sent: sent 3" in out
+    # Codex logs its repository (held off by the pattern); Claude Code's is unknown here, so the "off" pattern
+    # holds it back too.
+    assert "sessions without a known repository: off" in out
+    assert "claude-code: 0 records at counts, 3 left out" in out and "codex: 0 records at counts, 1 left out" in out
+    assert f"work activity: takes {ACTIVITY_SCHEMA}" in out and not server.activity_posts
     server.activity = False
     cli.main(["doctor"])
     out, _ = capsys.readouterr()

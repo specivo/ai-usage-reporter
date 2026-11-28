@@ -30,6 +30,7 @@ from ai_usage_reporter.activity_record import (
     ActivityRecord,
     ActivityRecordError,
     activity_key,
+    lowest_level,
     thread_hash,
 )
 from ai_usage_reporter.adapters import Adapter, DiscoveryContext, Registry, parse_all
@@ -329,6 +330,8 @@ def collect(
     invalid = 0
     #: (tool, session, day, segment issue) -> the record of the bucket with the earliest request.
     anchors: dict[tuple[str, str, date, str | None], tuple[tuple[datetime, str], ContractRecord]] = {}
+    #: The same groups -> the repositories of all their buckets (the level is the lowest of theirs).
+    group_repos: dict[tuple[str, str, date, str | None], set[str | None]] = {}
     for bucket in buckets:
         record = enricher.record(bucket)
         try:
@@ -341,7 +344,16 @@ def collect(
         rank = (bucket.started_at, bucket.model)
         if group not in anchors or rank < anchors[group][0]:
             anchors[group] = (rank, record)
-    work = build_activity(config, parts, events, issues, {k: v[1] for k, v in anchors.items()}, reports, now)
+        repo = (record.to_wire().get("attribution") or {}).get("repo")
+        group_repos.setdefault(group, set()).add(repo if isinstance(repo, str) else None)
+    try:
+        work = build_activity(
+            config, parts, events, issues, {k: v[1] for k, v in anchors.items()}, reports, now, group_repos
+        )
+    except Exception:  # work activity must never break the usage push
+        work = []
+        for report in reports.values():
+            report.notes.append("work activity could not be summarised this time (nothing of it is sent)")
     if state is not None:
         records.extend(superseded_records(records, state))
         work.extend(superseded_activity(work, state))
@@ -362,7 +374,12 @@ def _work_parts(
     and a part of a request that is not collected (excluded, or its copy is missing) is left out.
     """
     out: list[_Part] = []
-    for (_tool, _session, thread), work in work_by_thread(thread_events, usage):
+    try:
+        threads = work_by_thread(thread_events, usage)
+    except Exception:  # work activity must never break the usage push
+        report.notes.append("work activity could not be summarised this time (nothing of it is sent)")
+        return out
+    for (_tool, _session, thread), work in threads:
         report.activity_unplaced_runs += work.unplaced_runs
 
         def collected(index: int) -> int | None:
@@ -389,6 +406,7 @@ def build_activity(
     anchors: Mapping[tuple[str, str, date, str | None], ContractRecord],
     reports: Mapping[str, SourceReport],
     now: datetime,
+    group_repos: Mapping[tuple[str, str, date, str | None], set[str | None]] | None = None,
 ) -> list[ActivityRecord]:
     """One activity record per session, thread, UTC day and issue segment that has work and an anchor record."""
     groups: dict[tuple[str, str, str | None, date, str | None], GroupWork] = {}
@@ -403,17 +421,18 @@ def build_activity(
             group.pieces.append(part.piece)
         group.spawns += int(part.spawn)
     out: list[ActivityRecord] = []
-    levels: dict[str, str] = {}
     for (tool, session, thread, day, issue), group in sorted(
         groups.items(), key=lambda item: (item[0][3], item[0][0], item[0][1], item[0][2] or "", item[0][4] or "")
     ):
         anchor = anchors.get((tool, session, day, issue))
         if anchor is None:
             continue  # its usage is not reported (too old, before --since, or not expressible)
-        if anchor.idempotency_key not in levels:
-            repo = (anchor.to_wire().get("attribution") or {}).get("repo")
-            levels[anchor.idempotency_key] = config.activity_sent_level(repo if isinstance(repo, str) else None)
-        level = levels[anchor.idempotency_key]
+        # The work may span every bucket of the group (other models, other folders): the lowest level wins.
+        repos = (group_repos or {}).get((tool, session, day, issue))
+        if not repos:
+            anchor_repo = (anchor.to_wire().get("attribution") or {}).get("repo")
+            repos = {anchor_repo if isinstance(anchor_repo, str) else None}
+        level = lowest_level(*(config.activity_sent_level(repo) for repo in repos))
         report = reports.get(tool)
         if level == OFF:
             if report is not None:
@@ -984,11 +1003,12 @@ class ActivityDelivery:
 
 
 def anchor_sent(ledger: State) -> Callable[[str], bool]:
-    """Whether the usage record with this key is stored on the server (sent, or kept there after a conflict)."""
+    """Whether the usage record with this key is stored on the server (sent, kept after a conflict, or accepted
+    before and only waiting to be updated)."""
 
     def check(key: str) -> bool:
         row = ledger.bucket(key)
-        return row is not None and row.status in (SENT, CONFLICT)
+        return row is not None and (row.status in (SENT, CONFLICT) or row.entry_id is not None)
 
     return check
 
@@ -1029,9 +1049,9 @@ def deliver_activity(
     send = getattr(sink, "send_activity", None)
     if not records or not callable(send):
         return summary
-    wires = [r.to_wire() for r in records]
     ledger = state if (state is not None and sink.records_state) else None
     try:
+        wires = [r.to_wire() for r in records]
         supported = getattr(sink, "activity_supported", None)
         summary.supported = bool(supported()) if callable(supported) else True
         if ledger is not None:
@@ -1050,6 +1070,9 @@ def deliver_activity(
         outcomes: list[Outcome] = send(to_send) if to_send else []
     except SinkError as exc:
         summary.error = str(exc)
+        return summary
+    except Exception as exc:  # work activity must never break the usage push
+        summary.error = f"unexpected {type(exc).__name__}"
         return summary
     by_key = {w["idempotency_key"]: w for w in to_send}
     for outcome in outcomes:
