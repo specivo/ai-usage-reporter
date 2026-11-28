@@ -30,14 +30,31 @@ What the rollout format looks like, and what this adapter does with it:
 - OpenAI counts cached input inside ``input_tokens`` and reasoning inside
   ``output_tokens``. Both are moved to their own classes so each token is
   counted once (``cache_read`` and ``reasoning``).
-- **Issue marks.** A ``response_item`` of type ``function_call`` names the
-  tool (``name``, with the MCP server in ``namespace``) and its ``arguments``
-  as JSON text; an ``event_msg`` of type ``mcp_tool_call_end`` repeats the
-  call (``invocation.tool`` and ``invocation.arguments``) with its
-  ``result``. Marking Specivo calls (see :mod:`ai_usage_reporter.issue_marks`)
-  become markers at the call's time; ``specivo_create_issue`` takes the
-  created key from the ``mcp_tool_call_end`` result. Only the tool name, the
-  arguments that decide the mark and the issue key are read.
+- **Issue marks.** Marking Specivo calls (see
+  :mod:`ai_usage_reporter.issue_marks`) become markers at the time the call
+  started. Codex has logged MCP calls in three ways, all read:
+
+  - current rollouts (since September 2026): an ``event_msg`` of type
+    ``item_completed`` whose ``item.type`` is ``McpToolCall``, with the bare
+    tool name in ``item.tool``, the MCP server in ``item.server``,
+    ``item.arguments`` as an object, ``item.status`` (``completed`` or
+    ``failed``) and ``item.result`` (``content`` blocks and ``isError``, or
+    ``null``). The call started at ``started_at_ms`` (the line's
+    ``timestamp`` when that is missing). Calls made from code mode (the
+    ``exec`` custom tool) are logged the same way. A failed call, a ``null``
+    result or ``isError: true`` marks nothing;
+  - older rollouts: a ``response_item`` of type ``function_call`` names the
+    tool (``name``, with the MCP server in ``namespace``) and its
+    ``arguments`` as JSON text;
+  - older rollouts: an ``event_msg`` of type ``mcp_tool_call_end`` repeats
+    the call (``invocation.tool`` and ``invocation.arguments``) with its
+    ``result`` under ``Ok``.
+
+  ``specivo_create_issue`` takes the created key from the start of the
+  result's first text block. One call marks at most once: the
+  ``item.id`` and ``call_id`` of the forms are the same call. Only the tool
+  name, the arguments that decide the mark, the call's status and error flag
+  and the issue key are read.
 """
 
 from __future__ import annotations
@@ -107,7 +124,7 @@ def codex_homes(ctx: DiscoveryContext) -> list[Path]:
 class CodexAdapter:
     name = "codex"
     provider = "openai"
-    parser_version = "codex/3"
+    parser_version = "codex/4"
 
     def discover(self, ctx: DiscoveryContext) -> Iterable[SourceFile]:
         can_decompress = zstd_available()
@@ -152,7 +169,7 @@ class CodexAdapter:
             payload = line.get("payload")
             if not isinstance(payload, dict):
                 continue
-            if payload.get("type") in ("function_call", "mcp_tool_call_end"):
+            if payload.get("type") in ("function_call", "mcp_tool_call_end", "item_completed"):
                 for issue, marked_at in self._marks(line, payload, marked, creating):
                     yield UsageEvent(
                         tool=self.name,
@@ -231,6 +248,9 @@ class CodexAdapter:
         line: dict[str, object], payload: dict[str, object], marked: set[str], creating: dict[str, datetime]
     ) -> Iterator[tuple[str, datetime]]:
         """The issues one line marks, with the time of the call (see :mod:`ai_usage_reporter.issue_marks`)."""
+        if payload.get("type") == "item_completed":
+            yield from CodexAdapter._item_marks(line, payload, marked, creating)
+            return
         when = parse_timestamp(line.get("timestamp"))
         call_id = get_str(payload, "call_id")
         if when is None or call_id is None or call_id in marked:
@@ -254,6 +274,38 @@ class CodexAdapter:
             return
         result = get_dict(payload, "result", "Ok")
         if result is None or result.get("isError") is True:
+            return
+        created = created_issue(result.get("content"))
+        if created is not None:
+            yield created, started
+
+    @staticmethod
+    def _item_marks(
+        line: dict[str, object], payload: dict[str, object], marked: set[str], creating: dict[str, datetime]
+    ) -> Iterator[tuple[str, datetime]]:
+        """The issue a completed ``McpToolCall`` item marks, with the time the call started."""
+        item = get_dict(payload, "item")
+        if item is None or item.get("type") != "McpToolCall":
+            return
+        call_id = get_str(item, "id")
+        if call_id is None or call_id in marked:
+            return
+        mark = marking_call(get_str(item, "tool"), item.get("arguments"))
+        if mark is None:
+            return
+        started = (
+            creating.pop(call_id, None)
+            or parse_timestamp(payload.get("started_at_ms"))
+            or parse_timestamp(line.get("timestamp"))
+        )
+        if started is None:
+            return
+        marked.add(call_id)
+        result = item.get("result")
+        if item.get("status") == "failed" or not isinstance(result, dict) or result.get("isError") is True:
+            return
+        if mark != CREATE:
+            yield mark, started
             return
         created = created_issue(result.get("content"))
         if created is not None:

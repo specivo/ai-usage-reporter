@@ -63,12 +63,12 @@ def test_push_status_and_second_push(
 ) -> None:
     assert cli.main(["push", "--no-git"]) == 0
     sent = sum(len(b) for b in server.posts)
-    assert sent == 8
+    assert sent == 10
     assert cli.main(["push", "--no-git"]) == 0
     assert sum(len(b) for b in server.posts) == sent  # nothing changed, nothing sent
     assert cli.main(["status"]) == 0
     out, err = capsys.readouterr()
-    assert "sent 8" in out
+    assert "sent 10" in out
     _no_canaries(out + err)
 
 
@@ -94,8 +94,8 @@ def test_status_and_doctor_show_conflicts_and_rejections(
     assert cli.main(["doctor"]) == 0
     out, err = capsys.readouterr()
     assert "key_conflict 1" in out and "API key: from the environment" in out
-    # Only claude-code was pushed: its records went (one refused for good); codex's 3 are still to send.
-    assert "records collected: 8; a push would send 3 (4 unchanged since the last push, 1 refused earlier" in out
+    # Only claude-code was pushed: its records went (one refused for good); codex's 5 are still to send.
+    assert "records collected: 10; a push would send 5 (4 unchanged since the last push, 1 refused earlier" in out
     _no_canaries(out + err)
 
 
@@ -113,7 +113,7 @@ def test_show_payload(env: dict[str, Path], capsys: pytest.CaptureFixture[str]) 
     assert cli.main(["show-payload", "--no-git", "--source", "codex", "--since", "2026-10-05"]) == 0
     out, _ = capsys.readouterr()
     records = json.loads(out)["records"]
-    assert len(records) == 2 and all(r["usage_date"] == "2026-10-05" for r in records)
+    assert sorted(r["usage_date"] for r in records) == ["2026-10-05", "2026-10-05", "2026-10-06", "2026-10-06"]
 
 
 def test_show_payload_and_dry_run_list_only_what_a_push_would_send(
@@ -121,8 +121,8 @@ def test_show_payload_and_dry_run_list_only_what_a_push_would_send(
 ) -> None:
     assert cli.main(["show-payload", "--no-git"]) == 0
     out, err = capsys.readouterr()
-    assert len(json.loads(out)["records"]) == 8
-    assert "8 records would be sent" in err
+    assert len(json.loads(out)["records"]) == 10
+    assert "10 records would be sent" in err
 
     assert cli.main(["push", "--no-git"]) == 0
     capsys.readouterr()
@@ -130,17 +130,17 @@ def test_show_payload_and_dry_run_list_only_what_a_push_would_send(
     assert cli.main(["show-payload", "--no-git"]) == 0
     out, err = capsys.readouterr()
     assert json.loads(out)["records"] == []
-    assert "0 records would be sent (0 from the queue); 8 unchanged since the last push" in err
+    assert "0 records would be sent (0 from the queue); 10 unchanged since the last push" in err
     assert cli.main(["push", "--dry-run", "--no-git"]) == 0
     out, err = capsys.readouterr()
-    assert json.loads(out)["records"] == [] and "8 unchanged since the last push" in err
+    assert json.loads(out)["records"] == [] and "10 unchanged since the last push" in err
 
     assert cli.main(["show-payload", "--no-git", "--all"]) == 0
     out, err = capsys.readouterr()
-    assert len(json.loads(out)["records"]) == 8 and "--all" in err
+    assert len(json.loads(out)["records"]) == 10 and "--all" in err
     assert cli.main(["doctor", "--offline"]) == 0
     out, _ = capsys.readouterr()
-    assert "records collected: 8; a push would send 0 (8 unchanged since the last push" in out
+    assert "records collected: 10; a push would send 0 (10 unchanged since the last push" in out
 
 
 def test_init_stores_the_key_privately(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
