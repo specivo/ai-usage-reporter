@@ -496,6 +496,41 @@ def test_codex_one_mark_per_call_across_log_forms(tmp_path: Path) -> None:
     ]
 
 
+def test_codex_item_then_older_forms_and_malformed_items(tmp_path: Path) -> None:
+    created = {"content": [{"type": "text", "text": "Created issue ACME-50: x"}], "isError": False}
+    failed = {"content": [{"type": "text", "text": "Created issue ACME-51: x"}], "isError": True}
+    end = {
+        "type": "mcp_tool_call_end",
+        "call_id": "c1",
+        "invocation": {"tool": "specivo_create_issue", "arguments": {}},
+        "result": {"Ok": created},
+    }
+    _codex_rollout(
+        tmp_path,
+        [
+            # Malformed items are skipped without an error.
+            _codex_line("2026-10-05T08:30:00Z", "event_msg", {"type": "item_completed", "item": "not an object"}),
+            _codex_line("2026-10-05T08:30:01Z", "event_msg", {"type": "item_completed"}),
+            _codex_item("2026-10-05T08:30:02Z", None, "specivo_timer", {"op": "start", "issue_ref": "ACME-52"}),  # type: ignore[arg-type]
+            _codex_item("2026-10-05T08:30:03Z", "c0", "specivo_create_issue", {}, result={"content": "CANARY"}),
+            # A create item (at started_at_ms), then the same call as mcp_tool_call_end: one mark.
+            _codex_item(
+                "2026-10-05T09:00:00Z", "c1", "specivo_create_issue", {}, started_ms=STARTED_MS, result=created
+            ),
+            _codex_line("2026-10-05T09:00:01Z", "event_msg", end),
+            # A create announced as a function call whose item failed: no mark, and the end marks nothing either.
+            _codex_line(
+                "2026-10-05T09:30:00Z",
+                "response_item",
+                {"type": "function_call", "name": "specivo_create_issue", "arguments": "{}", "call_id": "c2"},
+            ),
+            _codex_item("2026-10-05T09:30:02Z", "c2", "specivo_create_issue", {}, status="failed", result=failed),
+            _codex_line("2026-10-05T09:30:03Z", "event_msg", {**end, "call_id": "c2"}),
+        ],
+    )
+    assert _codex_marks(tmp_path) == [("ACME-50", STARTED)]
+
+
 def test_codex_mcp_items_split_the_session(tmp_path: Path) -> None:
     update = {"issue_ref": "acme-49", "status_id": 2, "notes": "CANARY-PROMPT-5c1e"}
     _codex_rollout(tmp_path, [_codex_item("2026-10-05T09:00:00Z", "exec-1", "specivo_update_issue", update)])
