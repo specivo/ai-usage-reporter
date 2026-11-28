@@ -1,6 +1,6 @@
 """The ``ai-usage`` command line.
 
-``init``, ``push``, ``status``, ``doctor``, ``show-payload``, ``import ccusage``,
+``init``, ``push``, ``status``, ``doctor``, ``show-payload``, ``time``, ``import ccusage``,
 ``hooks install|uninstall``, ``schedule install|remove``, and ``hook`` /
 ``hook-push``, which the AI tools' hooks run.
 
@@ -21,7 +21,8 @@ import os
 import re
 import sys
 from collections.abc import Sequence
-from datetime import UTC, date, datetime
+from dataclasses import replace
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -68,6 +69,7 @@ from ai_usage_reporter.sinks import Sink, SinkContext, make_batch, plugin_sinks
 from ai_usage_reporter.sinks.json_sink import JsonSink
 from ai_usage_reporter.sinks.specivo import SinkError, SpecivoSink
 from ai_usage_reporter.state import CONFLICT, PENDING, REJECTED, STATE_FILE, State
+from ai_usage_reporter.time_report import GROUPINGS, render_table, summarise, to_json
 
 ISSUE_ENV = "SPECIVO_ISSUE"
 _ISSUE = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,127}-[1-9][0-9]{0,8}$")
@@ -457,6 +459,59 @@ def _print_preview(summary: DeliverySummary, *, everything: bool) -> None:
     )
 
 
+def _day(value: str | None, flag: str) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        raise CliError(f"{flag} takes a date, YYYY-MM-DD") from None
+
+
+def cmd_time(args: argparse.Namespace) -> int:
+    """Measured agent time per issue (or day, session, tool), from the records a push would send. Local only."""
+    config, _cfg_path, state_path = _load(args)
+    until = _day(args.until, "--until")
+    since = _day(args.since, "--since")
+    if since is None:
+        since = (until or datetime.now(UTC).date()) - timedelta(days=MEASURED_DAYS - 1)
+    if until is not None and until < since:
+        raise CliError("--until is before --since")
+    selection = Selection(sources=tuple(args.source or ()), since=since)
+    _check_sources(selection)
+    # Measured even when active_time = false: nothing leaves the machine here.
+    measuring = replace(config, active_time=True)
+    with State.scratch_copy(state_path) as scratch:
+        collected = _collect(args, measuring, scratch, selection, store_hints=False)
+        wires = [r.to_wire() for r in collected.current_records]
+        gated = gate_like_last_push(wires, scratch)
+    server_refuses = any("active_seconds" in w for w in wires) and not any("active_seconds" in w for w in gated)
+    would_send = config.active_time and not server_refuses
+    report = summarise(wires, args.by, since=since, until=until)
+    if args.json:
+        print(json.dumps(to_json(report, since=since, until=until, would_send=would_send), indent=2))
+    else:
+        span = f"{since.isoformat()} to {until.isoformat() if until else 'today'}"
+        print(f"Measured agent time, UTC days {span}, by {args.by}:", file=sys.stderr, flush=True)
+        if report.rows:
+            sys.stdout.write(render_table(report))
+            sys.stdout.flush()
+        else:
+            print("no records in this period", file=sys.stderr)
+        print(
+            "wall clock: the union of the agents' active intervals; agent time: their sum (parallel agents add up)."
+            " not measured: records of sources without active time.",
+            file=sys.stderr,
+        )
+    if not config.active_time:
+        print(
+            "active_time = false in the config: these values are measured here and would not be sent.", file=sys.stderr
+        )
+    elif server_refuses:
+        print("the server took no active time at the last push: a push would not send these values.", file=sys.stderr)
+    return 0
+
+
 def _local_time(value: str | None, config: Config) -> str:
     if not value:
         return "-"
@@ -829,6 +884,19 @@ def build_parser() -> argparse.ArgumentParser:
     _selection_args(show)
     show.add_argument("--all", action="store_true", help="every collected record, also those a push would skip")
     show.set_defaults(func=cmd_show_payload)
+
+    times = sub.add_parser("time", help="measured agent time per issue, from the local logs (sends nothing)")
+    times.add_argument("--since", help="first UTC day (YYYY-MM-DD; default: 6 days before --until or today)")
+    times.add_argument("--until", help="last UTC day (YYYY-MM-DD; default: today)")
+    times.add_argument(
+        "--by", choices=GROUPINGS, default="issue", help="group by issue (default), day, session or tool"
+    )
+    times.add_argument("--json", action="store_true", help="print JSON, durations in seconds")
+    times.add_argument(
+        "--source", action="append", help="only this source (repeatable): claude-code, codex, gemini-cli, opencode"
+    )
+    times.add_argument("--no-git", action="store_true", help="do not run git for repository and commit hints")
+    times.set_defaults(func=cmd_time)
 
     imports = sub.add_parser("import", help="import usage reported by another program")
     imports_sub = imports.add_subparsers(dest="importer", required=True)
