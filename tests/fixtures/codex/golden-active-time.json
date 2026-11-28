@@ -1,0 +1,128 @@
+[
+  {
+    "attribution": {
+      "git_branch": "main",
+      "repo": "github.com/acme/svc"
+    },
+    "ended_at": "2026-11-04T10:00:30Z",
+    "idempotency_key": "da70f52f333e322ec393791f04c255a6dc41169fe77e31079fa8b3f01f13079b",
+    "model": "gpt-5-codex",
+    "provider": "openai",
+    "request_count": 1,
+    "route": "openai",
+    "session_id": "c0dec0de-0000-4000-8000-000000000004",
+    "started_at": "2026-11-04T10:00:30Z",
+    "tokens": {
+      "input": 700,
+      "output": 70
+    },
+    "tool": "codex",
+    "tool_version": "0.80.0",
+    "usage_date": "2026-11-04"
+  },
+  {
+    "active_seconds": 274,
+    "active_spans": [
+      [
+        "2026-11-05T13:00:00Z",
+        "2026-11-05T13:00:10Z"
+      ],
+      [
+        "2026-11-05T13:01:00Z",
+        "2026-11-05T13:05:12Z"
+      ],
+      [
+        "2026-11-05T13:20:10Z",
+        "2026-11-05T13:20:22Z"
+      ]
+    ],
+    "active_time_version": 1,
+    "attribution": {
+      "git_branch": "main",
+      "issue_ref": "ACME-40",
+      "issue_ref_source": "agent_log",
+      "repo": "github.com/acme/svc"
+    },
+    "ended_at": "2026-11-05T13:20:21Z",
+    "idempotency_key": "f28661ada10896b109ca524b95e6d838afedc88fee02070e8069f83174e12677",
+    "model": "gpt-5-codex",
+    "provider": "openai",
+    "request_count": 4,
+    "route": "openai",
+    "session_id": "c0dec0de-0000-4000-8000-000000000001",
+    "started_at": "2026-11-05T13:00:09Z",
+    "tokens": {
+      "input": 3700,
+      "output": 370
+    },
+    "tool": "codex",
+    "tool_version": "0.80.0",
+    "usage_date": "2026-11-05"
+  },
+  {
+    "active_seconds": 41,
+    "active_spans": [
+      [
+        "2026-11-05T12:50:00Z",
+        "2026-11-05T12:50:31Z"
+      ],
+      [
+        "2026-11-05T12:55:00Z",
+        "2026-11-05T12:55:10Z"
+      ]
+    ],
+    "active_time_version": 1,
+    "attribution": {
+      "git_branch": "main",
+      "issue_ref": "ACME-99",
+      "issue_ref_source": "agent_log",
+      "repo": "github.com/acme/svc"
+    },
+    "ended_at": "2026-11-05T12:50:29Z",
+    "idempotency_key": "df64c629612ec7e26c956f3810117810ed3570df2267359d662bf44c34524a76",
+    "model": "gpt-5-codex",
+    "provider": "openai",
+    "request_count": 1,
+    "route": "openai",
+    "session_id": "c0dec0de-0000-4000-8000-000000000001",
+    "started_at": "2026-11-05T12:50:29Z",
+    "tokens": {
+      "input": 100,
+      "output": 10
+    },
+    "tool": "codex",
+    "tool_version": "0.80.0",
+    "usage_date": "2026-11-05"
+  },
+  {
+    "active_seconds": 62,
+    "active_spans": [
+      [
+        "2026-11-05T13:02:00Z",
+        "2026-11-05T13:03:02Z"
+      ]
+    ],
+    "active_time_version": 1,
+    "attribution": {
+      "git_branch": "main",
+      "issue_ref": "ACME-41",
+      "issue_ref_source": "agent_log",
+      "repo": "github.com/acme/svc"
+    },
+    "ended_at": "2026-11-05T13:03:01Z",
+    "idempotency_key": "476eb422002b5a149cbdc709389da1f8a3548436128e59975c6f767073504546",
+    "model": "gpt-5-mini",
+    "provider": "openai",
+    "request_count": 1,
+    "route": "openai",
+    "session_id": "c0dec0de-0000-4000-8000-000000000001",
+    "started_at": "2026-11-05T13:03:01Z",
+    "tokens": {
+      "input": 500,
+      "output": 50
+    },
+    "tool": "codex",
+    "tool_version": "0.80.0",
+    "usage_date": "2026-11-05"
+  }
+]

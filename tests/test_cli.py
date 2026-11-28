@@ -250,3 +250,29 @@ def test_init_without_url_or_config_does_not_prompt_when_piped(
     monkeypatch.setattr("sys.stdin", io.StringIO("spv_x\n"))
     assert cli.main(["init", "--key-stdin", "--no-keyring", "--offline"]) != 0
     assert "--url" in capsys.readouterr().err
+
+
+def test_doctor_after_a_push_has_nothing_to_send(
+    env: dict[str, Path], server: FakeServer, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A server that takes every optional field (active time among them), and a session issue captured by a
+    # hook's push: doctor must build the records as push does (gated, with the session and git hints), or it
+    # keeps counting records a push finds unchanged.
+    from ai_usage_reporter.record import OPTIONAL_FIELDS
+
+    server.info["optional_fields"] = list(OPTIONAL_FIELDS)
+    monkeypatch.setenv("SPECIVO_ISSUE", "ACME-12")
+    assert cli.main(["push", "--session", "11111111-2222-4111-8111-111111111111"]) == 0
+    monkeypatch.delenv("SPECIVO_ISSUE")
+    assert cli.main(["push"]) == 0
+    assert any("active_seconds" in r for batch in server.posts for r in batch)
+    capsys.readouterr()
+    assert cli.main(["push"]) == 0
+    _out, err = capsys.readouterr()
+    assert "sent 0" in err or "sent 0" in _out
+    cli.main(["doctor", "--offline"])
+    out, _ = capsys.readouterr()
+    assert "a push would send 0 (10 unchanged since the last push" in out
+    assert cli.main(["show-payload"]) == 0
+    out, err = capsys.readouterr()
+    assert json.loads(out)["records"] == [] and "10 unchanged since the last push" in err
