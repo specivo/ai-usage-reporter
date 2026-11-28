@@ -64,6 +64,14 @@
     "usage_date": "2026-10-05"
   },
   {
+    "active_seconds": 60,
+    "active_spans": [
+      [
+        "2026-10-06T09:01:00Z",
+        "2026-10-06T09:02:00Z"
+      ]
+    ],
+    "active_time_version": 1,
     "attribution": {
       "issue_ref": "ACME-21",
       "issue_ref_source": "agent_log"
@@ -86,6 +94,14 @@
     "usage_date": "2026-10-06"
   },
   {
+    "active_seconds": 181,
+    "active_spans": [
+      [
+        "2026-10-06T09:02:00Z",
+        "2026-10-06T09:05:01Z"
+      ]
+    ],
+    "active_time_version": 1,
     "attribution": {
       "issue_ref": "ACME-22",
       "issue_ref_source": "agent_log"

@@ -13,7 +13,7 @@ from ai_usage_reporter.adapters.gemini_cli import GeminiCliAdapter
 from ai_usage_reporter.adapters.hermes import HermesAdapter
 from ai_usage_reporter.adapters.opencode import OpenCodeAdapter
 from ai_usage_reporter.testing import AdapterConformance
-from tests.fixtures import active_time_home, agent_log_home, hermes_home
+from tests.fixtures import active_time_home, agent_log_home, codex_time_home, hermes_home
 from tests.fixtures.opencode_home import build
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -82,6 +82,20 @@ class TestClaudeCodeActiveTimeConformance(AdapterConformance):
     fixture_home = _active_time_home()
     golden = FIXTURES / "claude_code" / "golden-active-time.json"
     canaries = CANARIES
+
+
+def _codex_time_home() -> Path:
+    """Codex rollouts of a session with two subagents and an older rollout (tests/fixtures/codex_time_home.py)."""
+    folder = Path(tempfile.mkdtemp(prefix="codex-time-fixture-"))
+    atexit.register(shutil.rmtree, folder, True)
+    return codex_time_home.build(folder / "home")
+
+
+class TestCodexActiveTimeConformance(AdapterConformance):
+    adapter = CodexAdapter()
+    fixture_home = _codex_time_home()
+    golden = FIXTURES / "codex" / "golden-active-time.json"
+    canaries = (*CANARIES, codex_time_home.CANARY_COMMAND, codex_time_home.CANARY_MESSAGE)
 
 
 def _hermes_home() -> Path:

@@ -294,10 +294,10 @@ def test_active_time_off_sends_none_of_the_three(tmp_path: Path) -> None:
 
 
 def test_sources_without_thread_events_never_carry_the_fields() -> None:
-    home = Path(__file__).parent / "fixtures" / "codex" / "home"
-    from ai_usage_reporter.adapters.codex import CodexAdapter
+    home = Path(__file__).parent / "fixtures" / "gemini_cli" / "home"
+    from ai_usage_reporter.adapters.gemini_cli import GeminiCliAdapter
 
-    adapter = CodexAdapter()
+    adapter = GeminiCliAdapter()
     collected = collect(
         Config(),
         Registry(adapters={adapter.name: adapter}),
@@ -307,7 +307,7 @@ def test_sources_without_thread_events_never_carry_the_fields() -> None:
     )
     assert collected.records
     assert all(not set(ACTIVE_TIME_FIELDS) & set(r.to_wire()) for r in collected.records)
-    assert collected.reports["codex"].thread_events == 0
+    assert collected.reports["gemini-cli"].thread_events == 0
 
 
 def test_the_parse_cache_keeps_thread_events(tmp_path: Path) -> None:

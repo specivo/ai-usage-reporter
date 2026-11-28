@@ -21,7 +21,7 @@ the AI usage ingest contract `specivo.ai-usage.v1`, so it needs Specivo 0.13.0 o
 | Tool | Logs | Notes |
 |---|---|---|
 | Claude Code (`claude-code`) | `~/.claude/projects/` and `~/.config/claude/projects/`; `CLAUDE_CONFIG_DIR` moves them | Subagent work counts in the parent session; repeated copies of a response count once |
-| Codex CLI (`codex`) | `~/.codex/sessions/` and `~/.codex/archived_sessions/`; `CODEX_HOME` moves them | Active rollouts win over archived copies; compressed rollouts need the `zstd` extra before Python 3.14 |
+| Codex CLI (`codex`) | `~/.codex/sessions/` and `~/.codex/archived_sessions/`; `CODEX_HOME` moves them | Active rollouts win over archived copies; compressed rollouts need the `zstd` extra before Python 3.14; a subagent's rollout counts in its parent session (the copy of the parent's history it starts with is skipped) |
 | Gemini CLI (`gemini-cli`) | `~/.gemini/tmp/<project>/chats/` (and `~/.cache/.gemini` under the macOS sandbox), JSON and JSONL recordings | Cached prompt tokens are reported as cache reads, thoughts as reasoning; subagents count in their parent session |
 | OpenCode (`opencode`) | `opencode.db` in `~/.local/share/opencode/` (`XDG_DATA_HOME` and `OPENCODE_DB` move it), and the older `storage/` JSON files | Read-only, never locked; child sessions count in their root session; OpenCode's cost is sent as the reported cost |
 | Hermes Agent (`hermes`) | `state.db` in `~/.hermes/` and in each `~/.hermes/profiles/<name>/` (`HERMES_HOME` moves it) | Read-only; running totals read as growth since the last push; child sessions count in their root session; see [Hermes Agent](#hermes-agent) |
@@ -309,7 +309,7 @@ of those calls leaves your machine. `ai-usage show-payload` shows the issue of e
 | Tool | Segments |
 |---|---|
 | Claude Code | Yes, main thread and subagents |
-| Codex | Yes (`McpToolCall` items of `item_completed` events in current rollouts, also for calls made from code mode; `function_call` and `mcp_tool_call_end` in older ones) |
+| Codex | Yes (`McpToolCall` items of `item_completed` events in current rollouts, also for calls made from code mode; `function_call` and `mcp_tool_call_end` in older ones). A subagent's rollout is a thread of its parent session |
 | OpenCode 2 | Yes, for status, assignee and timer calls (also calls made from code); a created issue's key is only read from a direct call's answer. Child sessions are threads of their root session |
 | Hermes | Yes, from the `tool_calls` of assistant messages (`mcp__<server>__specivo_*`); a created issue's key is read from the tool's answer. Child sessions are threads of their root session. Usage is placed at the time Hermes last saw it, so marks split it at push granularity |
 | OpenCode 1, Gemini CLI, `import ccusage` | Not read (OpenCode 1 keeps tool calls in a table of their own, ccusage has day totals only); Specivo's own match of MCP sessions (step 3) still applies |
@@ -338,10 +338,11 @@ How it is measured (definition version 1; the numbers are fixed, not settings):
 - Time between turns never counts: waiting for you to answer, for a background job to finish or
   for a subagent to hand back. A prompt starts a turn, whether you typed it or it is such a
   notification.
-- A question the agent asks you (`AskUserQuestion`, `ExitPlanMode`) counts nothing, however long
-  you take. A call you approved or refused by hand counts only through the 10 minute rule, so the
+- A question the agent asks you (Claude Code `AskUserQuestion` and `ExitPlanMode`, Codex
+  `request_user_input`) counts nothing, however long you take. A call you approved or refused by hand counts only through the 10 minute rule, so the
   time the permission prompt stayed open is not counted. A parent's wait for a foreground subagent
-  is not a tool run: the subagent counts that time itself.
+  (Claude Code) or a collaboration `wait` (Codex) is not a tool run: the subagent counts that time
+  itself.
 - Each piece of time belongs to the model request it leads to (or, at the end of a turn, the one
   before it), so it lands in that request's record: the same model, UTC day and issue as its
   tokens. Time before a mark goes to the issue of the request after it, a piece is never cut at
@@ -361,7 +362,13 @@ time. Once sent, they keep being sent: a record sent again without them clears t
 | Tool | Active time |
 |---|---|
 | Claude Code | Yes, main thread and subagents |
-| Codex, Gemini CLI, OpenCode, Hermes, `import ccusage` | Not yet: their records carry no active time |
+| Codex | Yes, main thread and subagents, from rollouts written since September 2026 (they log each item, a reasoning step, a message or a tool call, with its start and end); older rollouts carry no active time |
+| Gemini CLI, OpenCode, Hermes, `import ccusage` | Not yet: their records carry no active time |
+
+What is read for it: Claude Code's prompts, answers, tool calls and results (their times, ids, the
+tool's name and whether a person approved the call); Codex's turn starts and ends
+(`task_started`, `task_complete`, `turn_aborted`) and completed items (their times, ids and type, and
+the name of a collaboration tool). Never a command, an argument, an output or a message.
 
 `ai-usage doctor` shows, per source, the hours measured in the last 7 days and the seconds it could
 not give to any request (they are not sent). `active_time = false` in the config sends none of the
