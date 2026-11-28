@@ -1,0 +1,74 @@
+{
+  "schema": "specivo.ai-usage.v1",
+  "client": {"name": "ai-usage-reporter"},
+  "records": [
+    {
+      "idempotency_key": "example-active-only-seconds",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 1},
+      "active_seconds": 60
+    },
+    {
+      "idempotency_key": "example-active-negative",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 1},
+      "active_time_version": 1,
+      "active_seconds": -1,
+      "active_spans": []
+    },
+    {
+      "idempotency_key": "example-active-version-zero",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 1},
+      "active_time_version": 0,
+      "active_seconds": 0,
+      "active_spans": []
+    },
+    {
+      "idempotency_key": "example-active-span-not-a-pair",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 1},
+      "active_time_version": 1,
+      "active_seconds": 60,
+      "active_spans": [["2026-11-05T08:00:00Z"]]
+    },
+    {
+      "idempotency_key": "example-active-spans-overlap",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 1},
+      "active_time_version": 1,
+      "active_seconds": 600,
+      "active_spans": [["2026-11-05T08:00:00Z", "2026-11-05T08:05:00Z"], ["2026-11-05T08:04:00Z", "2026-11-05T08:06:00Z"]]
+    },
+    {
+      "idempotency_key": "example-active-span-outside-the-day",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 1},
+      "active_time_version": 1,
+      "active_seconds": 60,
+      "active_spans": [["2026-11-03T23:00:00Z", "2026-11-03T23:01:00Z"]]
+    },
+    {
+      "idempotency_key": "example-active-spans-longer-than-the-sum",
+      "tool": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 1},
+      "active_time_version": 1,
+      "active_seconds": 60,
+      "active_spans": [["2026-11-05T08:00:00Z", "2026-11-05T08:10:00Z"]]
+    }
+  ]
+}

@@ -176,6 +176,26 @@
       "pattern": "^[^\\x00-\\x1f\\x7f]+$",
       "description": "Name of the agent profile or home the usage came from, e.g. 'research'. Stored as is. Send it only to a server that lists 'profile' in optional_fields."
     },
+    "active_time_version": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 32767,
+      "description": "Version of the active time definition the reporter computed active_seconds and active_spans with. Stored as is; the server does not interpret it. Send active_time_version, active_seconds and active_spans together or not at all, and only to a server that lists all three in optional_fields."
+    },
+    "active_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000000,
+      "description": "Summed active seconds of all agent threads in the bucket, rounded to the nearest second. Sent with active_time_version and active_spans."
+    },
+    "active_spans": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "$ref": "#/$defs/span"
+      },
+      "description": "The union of the bucket's active intervals as [start, end] pairs: sorted by start, not overlapping and not touching; each starts no earlier than 24 hours before usage_date and ends no later than 24 hours after it, and not in the future. Their total length is at most active_seconds + 2 * (number of spans) + 1 seconds. An empty array with active_seconds 0 means measured, nothing active. Sent with active_time_version and active_seconds."
+    },
     "on_behalf_of": {
       "type": [
         "string",
@@ -205,6 +225,17 @@
       "format": "date-time",
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?(Z|[+-][0-9]{2}:[0-9]{2})$",
       "description": "RFC 3339 timestamp with a time zone offset ('Z' or '+07:00')."
+    },
+    "span": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "string",
+        "format": "date-time",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?(Z|[+-][0-9]{2}:[0-9]{2})$"
+      },
+      "description": "One active interval, [start, end): two RFC 3339 timestamps with an offset, start before end."
     },
     "count": {
       "type": "integer",

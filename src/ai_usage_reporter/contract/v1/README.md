@@ -28,14 +28,15 @@ Where this page and a schema disagree, one of them has a bug. Please report it.
 3. [The record](#the-record)
 4. [Buckets and upserts](#buckets-and-upserts)
 5. [Time](#time)
-6. [Costs](#costs)
-7. [Reporting for someone else](#reporting-for-someone-else)
-8. [Issue attribution](#issue-attribution)
-9. [The response](#the-response)
-10. [Limits](#limits)
-11. [Compatibility rules](#compatibility-rules)
-12. [Examples](#examples)
-13. [Open decisions](#open-decisions)
+6. [Active time](#active-time)
+7. [Costs](#costs)
+8. [Reporting for someone else](#reporting-for-someone-else)
+9. [Issue attribution](#issue-attribution)
+10. [The response](#the-response)
+11. [Limits](#limits)
+12. [Compatibility rules](#compatibility-rules)
+13. [Examples](#examples)
+14. [Open decisions](#open-decisions)
 
 ## Endpoints and authentication
 
@@ -72,7 +73,10 @@ works (the web app's cookie), but reporters should use a key.
   "tools": ["claude-code", "codex", "gemini-cli"],
   "currencies": ["EUR", "THB", "USD"],
   "issue_ref_sources": ["explicit", "env", "agent_log"],
-  "optional_fields": ["route", "billing_account", "parent_session_id", "unattended", "profile"]
+  "optional_fields": [
+    "route", "billing_account", "parent_session_id", "unattended", "profile",
+    "active_time_version", "active_seconds", "active_spans"
+  ]
 }
 ```
 
@@ -127,6 +131,7 @@ Only five properties are required. Everything else may be left out or set to `nu
 | `parent_session_id` | no | Opaque id of the session this one continues or was started from (1 to 200 characters): a subagent's parent, a branch, a continuation after context compression. See [Optional fields](#optional-fields). |
 | `unattended` | no | `true` for a run with nobody in the loop (a cron job, a scheduled agent run). Default `false`. See [Optional fields](#optional-fields). |
 | `profile` | no | The agent profile or home the usage came from, e.g. `research` (1 to 100 characters, no control characters). See [Optional fields](#optional-fields). |
+| `active_time_version`, `active_seconds`, `active_spans` | no | The agent time the reporter measured in the bucket, sent together or not at all. See [Active time](#active-time). |
 | `on_behalf_of` | no | Login of the person the usage belongs to. See [Reporting for someone else](#reporting-for-someone-else). |
 | `attribution` | no | Hints for the issue and project. See [Issue attribution](#issue-attribution). |
 
@@ -158,6 +163,12 @@ lost without an error.
 | `parent_session_id` | The session this one belongs under: a subagent's parent, a branch, a continuation after context compression. Sent by clients that report each session on its own; a reporter that rolls child sessions up into their root does not send it. Stored as is, never parsed. |
 | `unattended` | Usage of a run with nobody in the loop: a cron job, a scheduled or triggered agent run. A session is either attended or not. Spend reports split attended from unattended usage. |
 | `profile` | The agent profile or home the usage came from, e.g. `research`, for agents that run several profiles with their own configuration. Stored as is; spend reports group and filter by it. |
+| `active_time_version` | The version of the active time definition the two values below were computed with. See [Active time](#active-time). |
+| `active_seconds` | Summed active seconds of all agent threads in the bucket. See [Active time](#active-time). |
+| `active_spans` | The union of the bucket's active intervals, for the wall clock of a set of entries. See [Active time](#active-time). |
+
+The three active time properties go together: a reporter sends them only to a server that lists
+**all three**, and otherwise none of them.
 
 All are optional; `unattended` is a boolean and may be left out (it means `false`), the others
 may be `null`. A value that breaks its format rejects the record with `invalid_record` and
@@ -244,6 +255,42 @@ It is stable across resends, distinct per bucket, and reveals nothing about the 
 - Neither may be in the future.
 - Reports in Specivo show days in each viewer's time zone. Because buckets are UTC days, a local
   day can differ from the UTC day by a few hours at its edges.
+
+## Active time
+
+A reporter that reads the agent's own events can measure how long the agent was active in a
+bucket and send it with the record. Three properties carry it, **all three or none**:
+
+| Property | Type | Meaning |
+|---|---|---|
+| `active_time_version` | integer, 1 to 32767 | The version of the active time definition the reporter used. The server stores it as is and does not interpret it, so a later version is accepted unchanged. |
+| `active_seconds` | integer, 0 to 10,000,000 | Summed active seconds of all agent threads in the bucket (two threads active in the same minute count it twice), rounded to the nearest second. |
+| `active_spans` | array of at most 1000 pairs `[start, end]` | The union of the threads' active intervals. Each pair is two RFC 3339 timestamps with an offset (the format of `started_at`; reporters send whole seconds) and means the half-open interval `[start, end)`. |
+
+Rules (a broken one rejects the record with `invalid_record`, `field` naming the property):
+
+- All three, or none. With only some of them, `field` names the first one missing, in the order
+  `active_time_version`, `active_seconds`, `active_spans`.
+- Each span: `start` before `end`. The spans are sorted by `start`, do not overlap and do not
+  touch (the next one starts after the previous one ends): send them merged.
+- Each span starts no earlier than 24 hours before `00:00:00Z` of `usage_date` and ends no later
+  than 24 hours after the end of that day, and does not end in the future (the same 10 minutes of
+  clock allowance as `started_at`).
+- The spans' total length is at most `active_seconds + 2 * (number of spans) + 1` seconds: the
+  union cannot be longer than the sum, and the allowance covers rounding to whole seconds.
+- `active_seconds: 0` with `active_spans: []` is valid and means "measured, nothing active".
+  Leaving the three out means "not measured"; `null` is not allowed.
+
+The server stores the values on the entry and returns `active_seconds` and
+`active_time_version` with every entry, and the spans with a single entry. They are part of the
+bucket like its tokens: a resend with other values is `updated`, the same values are
+`unchanged`, and a resend **without** them clears them (a record is the complete state of its
+bucket). An entry a person moved or excluded keeps the move or the exclusion. Only this endpoint
+accepts active time; entries logged by hand, over the entries API or through MCP have none.
+
+From these values Specivo computes two numbers for any set of entries: the agent time (the sum
+of `active_seconds`) and the wall clock (the length of the union of all spans, so parallel
+agents and overlapping buckets count once).
 
 ## Costs
 
@@ -537,7 +584,8 @@ the record was rejected; an unknown warning code means it was stored.
   `route` and `billing_account` and the `GET` property `optional_fields` that lists them, with
   the result properties `payer` and `billing_account` and the warning `billing_account_unknown`;
   the record properties `parent_session_id`, `unattended` and `profile`, listed in
-  `optional_fields` too.
+  `optional_fields` too; the record properties `active_time_version`, `active_seconds` and
+  `active_spans` (measured active time, sent all three or none), listed in `optional_fields`.
 - **Clarifications** within v1 make explicit what the contract always meant and how Specivo
   has always processed it; they do not change the format. One so far: `tokens` and
   `long_context_tokens` are disjoint buckets whose sum is the usage (see

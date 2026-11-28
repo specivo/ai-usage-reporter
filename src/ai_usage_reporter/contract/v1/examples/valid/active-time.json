@@ -1,0 +1,36 @@
+{
+  "schema": "specivo.ai-usage.v1",
+  "client": {"name": "ai-usage-reporter", "version": "1.0.0"},
+  "records": [
+    {
+      "idempotency_key": "example-active-time",
+      "tool": "claude-code",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5",
+      "session_id": "b2f4c1d0-7a1e-4c55-9d1b-active000001",
+      "usage_date": "2026-11-05",
+      "started_at": "2026-11-05T08:00:00Z",
+      "ended_at": "2026-11-05T08:40:00Z",
+      "request_count": 41,
+      "tokens": {"input": 1200, "output": 3400, "cache_read": 250000},
+      "active_time_version": 1,
+      "active_seconds": 1310,
+      "active_spans": [
+        ["2026-11-05T08:00:04Z", "2026-11-05T08:14:40Z"],
+        ["2026-11-05T15:31:02+07:00", "2026-11-05T15:38:16+07:00"]
+      ]
+    },
+    {
+      "idempotency_key": "example-active-time-idle",
+      "tool": "claude-code",
+      "provider": "anthropic",
+      "model": "claude-haiku-4-5",
+      "session_id": "b2f4c1d0-7a1e-4c55-9d1b-active000001",
+      "usage_date": "2026-11-05",
+      "tokens": {"input": 40, "output": 10},
+      "active_time_version": 1,
+      "active_seconds": 0,
+      "active_spans": []
+    }
+  ]
+}
