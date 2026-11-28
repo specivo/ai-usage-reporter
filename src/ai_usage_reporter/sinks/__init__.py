@@ -40,6 +40,13 @@ class Outcome:
 
 
 class Sink(Protocol):
+    """A sink takes usage records; one that also takes work activity records has ``send_activity``.
+
+    ``send_activity(records) -> list[Outcome]`` is optional, and so is
+    ``activity_supported() -> bool`` (whether the other side takes activity at
+    all; a sink without it is assumed to).
+    """
+
     name: str
     #: Whether outcomes update the bucket ledger (only a real server's do).
     records_state: bool
@@ -55,9 +62,10 @@ class SinkContext:
     stream: TextIO | None = None
 
 
-def make_batch(records: Sequence[dict[str, Any]]) -> dict[str, Any]:
+def make_batch(records: Sequence[dict[str, Any]], schema: str = CONTRACT_VERSION) -> dict[str, Any]:
+    """The batch envelope of usage records (or, with the activity *schema*, of work activity records)."""
     return {
-        "schema": CONTRACT_VERSION,
+        "schema": schema,
         "client": {"name": CLIENT_NAME, "version": __version__},
         "records": list(records),
     }

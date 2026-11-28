@@ -53,6 +53,22 @@ What the transcript format looks like, and what this adapter does with it:
   An event is named by the line's ``uuid``, so a line replayed in a resumed or
   copied file counts once. Nothing else of a line is read for this.
 
+- **Work activity.** The same tool events carry what
+  :mod:`ai_usage_reporter.work_activity` summarises, read in memory and reduced at
+  once (no command, path, patch or output is kept):
+
+  - the category, from the tool's name: ``Read`` read; ``Grep``, ``Glob``,
+    ``ToolSearch`` search; ``Edit``, ``MultiEdit``, ``Write``, ``NotebookEdit``
+    edit; ``Bash`` by :func:`~ai_usage_reporter.work_activity.classify_command` of
+    ``input.command`` (test, git or shell); ``WebFetch``, ``WebSearch`` web;
+    ``Agent``, ``Task``, ``SendMessage`` subagent; ``mcp__*`` mcp; anything else
+    other. ``Agent`` and ``Task`` start a subagent;
+  - failure: ``is_error`` on the ``tool_result`` block;
+  - for an edit: lines added and removed from ``toolUseResult.structuredPatch``
+    (the ``+`` and ``-`` lines of its hunks; a new file written by ``Write``
+    counts its content's lines as added), and the file as a local hash of
+    ``toolUseResult.filePath``.
+
 - **Route.** Claude Code does not log the endpoint it called, so the route
   comes from, in this order:
 
@@ -104,6 +120,7 @@ from ai_usage_reporter.model import (
     parse_timestamp,
 )
 from ai_usage_reporter.state import State
+from ai_usage_reporter.work_activity import classify_command, file_identity, patch_lines, text_lines
 
 #: The environment variable that sends Claude Code to another endpoint (a gateway).
 BASE_URL_ENV = "ANTHROPIC_BASE_URL"
@@ -117,6 +134,52 @@ ORG_ROUTE_PREFIX = "claude.ai:org-"
 HUMAN_WAIT_TOOLS = frozenset({"AskUserQuestion", "ExitPlanMode"})
 #: Tools that start a subagent; in the foreground the call waits for it to finish.
 SUBAGENT_TOOLS = frozenset({"Agent", "Task"})
+#: Work activity categories by tool name (``Bash`` and ``mcp__*`` are decided apart).
+TOOL_CATEGORIES = {
+    "Read": "read",
+    "Grep": "search",
+    "Glob": "search",
+    "ToolSearch": "search",
+    "Edit": "edit",
+    "MultiEdit": "edit",
+    "Write": "edit",
+    "NotebookEdit": "edit",
+    "WebFetch": "web",
+    "WebSearch": "web",
+    "Agent": "subagent",
+    "Task": "subagent",
+    "SendMessage": "subagent",
+}
+#: Tools whose result tells which file changed and how (``toolUseResult``).
+EDIT_TOOLS = frozenset({"Edit", "MultiEdit", "Write", "NotebookEdit"})
+
+
+def tool_category(name: str | None, arguments: object) -> str:
+    """The work activity category of a tool call; a ``Bash`` command is read here and dropped."""
+    if name == "Bash":
+        command = arguments.get("command") if isinstance(arguments, dict) else None
+        return classify_command(command) if isinstance(command, str) else "shell"
+    if name and name.startswith("mcp__"):
+        return "mcp"
+    return TOOL_CATEGORIES.get(name or "", "other")
+
+
+def edit_detail(result: object) -> tuple[int, int, tuple[str, ...]]:
+    """Lines added and removed, and the hashed file, of an edit's ``toolUseResult`` (nothing of it is kept)."""
+    if not isinstance(result, dict):
+        return 0, 0, ()
+    added = removed = 0
+    patch = result.get("structuredPatch")
+    if isinstance(patch, list):
+        for hunk in patch:
+            if isinstance(hunk, dict) and isinstance(hunk.get("lines"), list):
+                plus, minus = patch_lines(hunk["lines"])
+                added, removed = added + plus, removed + minus
+    content = result.get("content")
+    if result.get("type") == "create" and not patch and isinstance(content, str):
+        added = text_lines(content)
+    path = result.get("filePath")
+    return added, removed, (file_identity(path),) if isinstance(path, str) and path else ()
 
 
 def _config_dirs(ctx: DiscoveryContext) -> list[Path]:
@@ -216,7 +279,7 @@ def _usage_tokens(usage: dict[str, Any]) -> TokenCounts:
 class ClaudeCodeAdapter:
     name = "claude-code"
     provider = "anthropic"
-    parser_version = "claude-code/4"
+    parser_version = "claude-code/5"
 
     def __init__(self) -> None:
         #: Session -> the base URL host the hook saw ('' for none), for the parses of one run.
@@ -346,7 +409,7 @@ class ClaudeCodeAdapter:
         session = file_session if is_subagent_file else (get_str(line, "sessionId") or file_session)
         uuid = get_str(line, "uuid")
 
-        def event(name: str, call_id: str | None = None, **flags: bool) -> ThreadEvent:
+        def event(name: str, call_id: str | None = None, **detail: Any) -> ThreadEvent:
             origin = uuid or f"{session}|{thread or ''}|{when.isoformat()}"
             return ThreadEvent(
                 tool=self.name,
@@ -356,7 +419,7 @@ class ClaudeCodeAdapter:
                 kind=name,
                 call_id=call_id,
                 key=f"{origin}|{name}|{call_id or ''}",
-                **flags,
+                **detail,
             )
 
         if kind == "system":
@@ -378,7 +441,13 @@ class ClaudeCodeAdapter:
                     continue
                 tool = get_str(block, "name")
                 names[call_id] = tool
-                yield event(TOOL_START, call_id, human_wait=tool in HUMAN_WAIT_TOOLS)
+                yield event(
+                    TOOL_START,
+                    call_id,
+                    human_wait=tool in HUMAN_WAIT_TOOLS,
+                    category=tool_category(tool, block.get("input")),
+                    spawns=tool in SUBAGENT_TOOLS,
+                )
             return
         results = [b for b in blocks if b.get("type") == "tool_result"]
         if not results:
@@ -391,12 +460,23 @@ class ClaudeCodeAdapter:
             if call_id is None:
                 continue
             tool = names.get(call_id)
+            failed = block.get("is_error") is True
+            # A line holds one toolUseResult: it describes the block only when the block is alone.
+            added, removed, files = (
+                edit_detail(line.get("toolUseResult"))
+                if tool in EDIT_TOOLS and not failed and len(results) == 1
+                else (0, 0, ())
+            )
             yield event(
                 TOOL_END,
                 call_id,
                 human_wait=tool in HUMAN_WAIT_TOOLS,
                 subagent_wait=tool in SUBAGENT_TOOLS and not _async_launch(line),
                 user_decided=decided,
+                failed=failed,
+                lines_added=added,
+                lines_removed=removed,
+                files=files,
             )
 
     def _marks(

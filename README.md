@@ -192,6 +192,15 @@ prompts, model answers and tool calls (never their content), and sends the secon
 later). Waits for you, for background jobs and for subagents do not count; `active_time = false`
 turns it off. See [Active time](docs/index.md#active-time).
 
+## Work activity
+
+Per session, thread, day and issue, the reporter also sends a summary of the agent's work on your
+machine (tool runs by category and their seconds, files changed, lines added and removed, test runs
+and failures, subagents, a labelled timeline) to Specivo servers that take it (0.16.0 or later).
+The default level, `counts`, sends counts and durations only, never a name, command, path or
+content; `[activity] level = "off"` (globally or per repository) sends nothing. See
+[Work activity](docs/index.md#work-activity).
+
 ## Privacy
 
 - **Never sent, never printed, never logged:** prompts, responses, code, tool input and output
@@ -212,7 +221,9 @@ turns it off. See [Active time](docs/index.md#active-time).
 - The local state database (in your user state directory) keeps file paths, to know which logs
   changed, and the records it sent. It never leaves your machine.
 - The test suite plants canary strings in prompts, tool output, paths and git credentials of the
-  fixtures and checks that none of them reaches any sink, the console or the state ledger.
+  fixtures and checks that none of them reaches any sink, the console or the state ledger; for work
+  activity also in command arguments, environment assignments, edited file paths, file contents,
+  patches and MCP arguments, checked against the payloads, the console and the whole state database.
 
 ## Configuration
 

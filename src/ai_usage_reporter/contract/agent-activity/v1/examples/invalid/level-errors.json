@@ -1,0 +1,106 @@
+{
+  "schema": "specivo.agent-activity.v1",
+  "client": {
+    "name": "ai-usage-reporter",
+    "version": "1.4.0"
+  },
+  "records": [
+    {
+      "idempotency_key": "example-names-on-counts",
+      "usage_key": "example-usage-anchor",
+      "tool": "claude-code",
+      "session_id": "example-session",
+      "usage_date": "2026-11-05",
+      "level": "counts",
+      "activity_version": 1,
+      "categories": {
+        "read": {
+          "count": 12,
+          "seconds": 40
+        },
+        "edit": {
+          "count": 5,
+          "seconds": 30
+        }
+      },
+      "files": [
+        {
+          "path": "src/a.py",
+          "edits": 1,
+          "added": 1,
+          "removed": 0
+        }
+      ]
+    },
+    {
+      "idempotency_key": "example-commands-on-counts",
+      "usage_key": "example-usage-anchor",
+      "tool": "claude-code",
+      "session_id": "example-session",
+      "usage_date": "2026-11-05",
+      "level": "counts",
+      "activity_version": 1,
+      "categories": {
+        "read": {
+          "count": 12,
+          "seconds": 40
+        },
+        "edit": {
+          "count": 5,
+          "seconds": 30
+        }
+      },
+      "commands": [
+        {
+          "name": "make",
+          "count": 1,
+          "failed": 0
+        }
+      ]
+    },
+    {
+      "idempotency_key": "example-null-agent-type-on-counts",
+      "usage_key": "example-usage-anchor",
+      "tool": "claude-code",
+      "session_id": "example-session",
+      "usage_date": "2026-11-05",
+      "level": "counts",
+      "activity_version": 1,
+      "categories": {
+        "read": {
+          "count": 12,
+          "seconds": 40
+        },
+        "edit": {
+          "count": 5,
+          "seconds": 30
+        }
+      },
+      "agent_type": null
+    },
+    {
+      "idempotency_key": "example-commits-on-names",
+      "usage_key": "example-usage-anchor",
+      "tool": "claude-code",
+      "session_id": "example-session",
+      "usage_date": "2026-11-05",
+      "level": "names",
+      "activity_version": 1,
+      "categories": {
+        "read": {
+          "count": 12,
+          "seconds": 40
+        },
+        "edit": {
+          "count": 5,
+          "seconds": 30
+        }
+      },
+      "commits": [
+        {
+          "sha": "32fe3796ff2245cb43d05a41280745a53a12bd54"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,264 @@
+{
+  "schema": "specivo.agent-activity.v1",
+  "client": {
+    "name": "ai-usage-reporter",
+    "version": "1.4.0"
+  },
+  "records": [
+    {
+      "idempotency_key": "example-unknown-category",
+      "usage_key": "example-usage-anchor",
+      "tool": "claude-code",
+      "session_id": "example-session",
+      "usage_date": "2026-11-05",
+      "level": "counts",
+      "activity_version": 1,
+      "categories": {
+        "read": {
+          "count": 1,
+          "seconds": 1
+        },
+        "browse": {
+          "count": 1,
+          "seconds": 2
+        }
+      }
+    },
+    {
+      "idempotency_key": "example-absolute-path",
+      "usage_key": "example-usage-anchor",
+      "tool": "claude-code",
+      "session_id": "example-session",
+      "usage_date": "2026-11-05",
+      "level": "names",
+      "activity_version": 1,
+      "categories": {
+        "read": {
+          "count": 12,
+          "seconds": 40
+        },
+        "edit": {
+          "count": 5,
+          "seconds": 30
+        }
+      },
+      "files": [
+        {
+          "path": "/home/someone/app/main.py",
+          "edits": 1,
+          "added": 1,
+          "removed": 0
+        }
+      ]
+    },
+    {
+      "idempotency_key": "example-parent-path",
+      "usage_key": "example-usage-anchor",
+      "tool": "claude-code",
+      "session_id": "example-session",
+      "usage_date": "2026-11-05",
+      "level": "names",
+      "activity_version": 1,
+      "categories": {
+        "read": {
+          "count": 12,
+          "seconds": 40
+        },
+        "edit": {
+          "count": 5,
+          "seconds": 30
+        }
+      },
+      "files": [
+        {
+          "path": "src/../../outside.txt",
+          "edits": 1,
+          "added": 1,
+          "removed": 0
+        }
+      ]
+    },
+    {
+      "idempotency_key": "example-command-with-arguments",
+      "usage_key": "example-usage-anchor",
+      "tool": "claude-code",
+      "session_id": "example-session",
+      "usage_date": "2026-11-05",
+      "level": "names",
+      "activity_version": 1,
+      "categories": {
+        "read": {
+          "count": 12,
+          "seconds": 40
+        },
+        "edit": {
+          "count": 5,
+          "seconds": 30
+        }
+      },
+      "commands": [
+        {
+          "name": "pytest -k login",
+          "count": 1,
+          "failed": 0
+        }
+      ]
+    },
+    {
+      "idempotency_key": "example-more-failed-than-runs",
+      "usage_key": "example-usage-anchor",
+      "tool": "claude-code",
+      "session_id": "example-session",
+      "usage_date": "2026-11-05",
+      "level": "counts",
+      "activity_version": 1,
+      "categories": {
+        "read": {
+          "count": 12,
+          "seconds": 40
+        },
+        "edit": {
+          "count": 5,
+          "seconds": 30
+        }
+      },
+      "test_runs": {
+        "count": 1,
+        "failed": 2
+      }
+    },
+    {
+      "idempotency_key": "example-overlapping-timeline",
+      "usage_key": "example-usage-anchor",
+      "tool": "claude-code",
+      "session_id": "example-session",
+      "usage_date": "2026-11-05",
+      "level": "counts",
+      "activity_version": 1,
+      "categories": {
+        "read": {
+          "count": 12,
+          "seconds": 40
+        },
+        "edit": {
+          "count": 5,
+          "seconds": 30
+        }
+      },
+      "timeline": [
+        [
+          "2026-11-05T09:00:00Z",
+          "2026-11-05T09:30:00Z",
+          "read"
+        ],
+        [
+          "2026-11-05T09:20:00Z",
+          "2026-11-05T09:40:00Z",
+          "edit"
+        ]
+      ]
+    },
+    {
+      "idempotency_key": "example-timeline-ends-before-start",
+      "usage_key": "example-usage-anchor",
+      "tool": "claude-code",
+      "session_id": "example-session",
+      "usage_date": "2026-11-05",
+      "level": "counts",
+      "activity_version": 1,
+      "categories": {
+        "read": {
+          "count": 12,
+          "seconds": 40
+        },
+        "edit": {
+          "count": 5,
+          "seconds": 30
+        }
+      },
+      "timeline": [
+        [
+          "2026-11-05T09:30:00Z",
+          "2026-11-05T09:00:00Z",
+          "read"
+        ]
+      ]
+    },
+    {
+      "idempotency_key": "example-repeated-file",
+      "usage_key": "example-usage-anchor",
+      "tool": "claude-code",
+      "session_id": "example-session",
+      "usage_date": "2026-11-05",
+      "level": "names",
+      "activity_version": 1,
+      "categories": {
+        "read": {
+          "count": 12,
+          "seconds": 40
+        },
+        "edit": {
+          "count": 5,
+          "seconds": 30
+        }
+      },
+      "files": [
+        {
+          "path": "src/a.py",
+          "edits": 1,
+          "added": 1,
+          "removed": 0
+        },
+        {
+          "path": "src/a.py",
+          "edits": 1,
+          "added": 2,
+          "removed": 0
+        }
+      ]
+    },
+    {
+      "idempotency_key": "example-short-sha",
+      "usage_key": "example-usage-anchor",
+      "tool": "claude-code",
+      "session_id": "example-session",
+      "usage_date": "2026-11-05",
+      "level": "commits",
+      "activity_version": 1,
+      "categories": {
+        "read": {
+          "count": 12,
+          "seconds": 40
+        },
+        "edit": {
+          "count": 5,
+          "seconds": 30
+        }
+      },
+      "commits": [
+        {
+          "sha": "32fe379"
+        }
+      ]
+    },
+    {
+      "idempotency_key": "example-unknown-level",
+      "usage_key": "example-usage-anchor",
+      "tool": "claude-code",
+      "session_id": "example-session",
+      "usage_date": "2026-11-05",
+      "level": "everything",
+      "activity_version": 1,
+      "categories": {
+        "read": {
+          "count": 12,
+          "seconds": 40
+        },
+        "edit": {
+          "count": 5,
+          "seconds": 30
+        }
+      }
+    }
+  ]
+}

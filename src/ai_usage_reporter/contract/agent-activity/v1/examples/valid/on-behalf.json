@@ -1,0 +1,29 @@
+{
+  "schema": "specivo.agent-activity.v1",
+  "client": {
+    "name": "ai-usage-reporter",
+    "version": "1.4.0"
+  },
+  "records": [
+    {
+      "idempotency_key": "example-activity-on-behalf",
+      "usage_key": "example-usage-teammate",
+      "tool": "claude-code",
+      "session_id": "example-session",
+      "usage_date": "2026-11-05",
+      "level": "counts",
+      "activity_version": 1,
+      "categories": {
+        "read": {
+          "count": 12,
+          "seconds": 40
+        },
+        "edit": {
+          "count": 5,
+          "seconds": 30
+        }
+      },
+      "on_behalf_of": "example-teammate"
+    }
+  ]
+}

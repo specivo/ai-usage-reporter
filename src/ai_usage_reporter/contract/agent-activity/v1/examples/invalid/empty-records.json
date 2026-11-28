@@ -1,0 +1,8 @@
+{
+  "schema": "specivo.agent-activity.v1",
+  "client": {
+    "name": "ai-usage-reporter",
+    "version": "1.4.0"
+  },
+  "records": []
+}

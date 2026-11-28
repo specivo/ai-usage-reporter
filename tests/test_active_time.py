@@ -6,7 +6,6 @@ in the comments.
 
 from __future__ import annotations
 
-import json
 import shutil
 from dataclasses import replace
 from datetime import UTC, date, datetime
@@ -25,7 +24,7 @@ from ai_usage_reporter.record import ACTIVE_TIME_FIELDS, OPTIONAL_FIELDS, gate_o
 from ai_usage_reporter.sinks.specivo import SpecivoSink
 from ai_usage_reporter.state import FileIdentity, State
 from ai_usage_reporter.testing import validate_records
-from tests.conftest import FakeServer, make_record
+from tests.conftest import FakeServer, make_record, usage_batch
 from tests.fixtures import active_time_home, agent_log_home
 from tests.fixtures.active_time_home import HAIKU, SESSION, SONNET, Transcript
 
@@ -462,7 +461,7 @@ def test_show_payload_and_dry_run_print_the_fields(cli_env: Path, capsys: pytest
     for argv in (["show-payload", "--no-git"], ["push", "--dry-run", "--no-git"]):
         assert cli.main(argv) == 0
         out, err = capsys.readouterr()
-        records = json.loads(out)["records"]
+        records = usage_batch(out)["records"]
         assert {r["active_seconds"] for r in records} == {218, 507}
         validate_records(records)
         assert "CANARY" not in out + err

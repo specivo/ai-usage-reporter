@@ -11,6 +11,12 @@
   the last status and error code. Only buckets whose payload changed are
   sent again. Rows with status ``pending`` are the retry queue; they are sent
   from the stored payload even after the tool deleted its logs.
+- ``activity``: one row per sent work activity record (see
+  :mod:`ai_usage_reporter.activity_record`), like ``buckets``: its key, the usage
+  record it is anchored to, the hash and JSON of the last payload (counts only),
+  the last status and error code. A record whose payload is unchanged since it
+  was sent is not sent again; a ``pending`` one (its usage record was not there
+  yet, or the server failed) is sent again when it is next collected.
 - ``session_hints``: the ``SPECIVO_ISSUE`` captured for a session.
 - ``runs``: a summary of each push, for ``status`` and ``doctor``.
 - ``meta``: the schema version, and whether the server refused
@@ -39,7 +45,7 @@ from typing import Any
 
 from ai_usage_reporter.model import ThreadEvent, UsageEvent, event_from_cache
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 #: The state database's file name in the state directory.
 STATE_FILE = "state.db"
 
@@ -85,6 +91,20 @@ CREATE TABLE IF NOT EXISTS buckets (
     drop_explicit INTEGER NOT NULL DEFAULT 0,
     attempts INTEGER NOT NULL DEFAULT 0,
     entry_id INTEGER,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS activity (
+    idempotency_key TEXT PRIMARY KEY,
+    tool TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    usage_date TEXT NOT NULL,
+    usage_key TEXT NOT NULL,
+    payload_hash TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL,
+    error_code TEXT,
+    error_message TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS session_hints (
@@ -210,6 +230,22 @@ class BucketRow:
     drop_explicit: bool
     attempts: int
     entry_id: int | None
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class ActivityRow:
+    idempotency_key: str
+    tool: str
+    session_id: str
+    usage_date: str
+    usage_key: str
+    payload_hash: str
+    payload: dict[str, Any]
+    status: str
+    error_code: str | None
+    error_message: str | None
+    attempts: int
     updated_at: str
 
 
@@ -416,6 +452,83 @@ class State:
                 int(flag),
                 attempts,
                 entry_id if entry_id is not None else (current.entry_id if current else None),
+                _now(),
+            ),
+        )
+
+    # -- work activity -----------------------------------------------------------
+
+    def _activity_row(self, row: sqlite3.Row) -> ActivityRow:
+        return ActivityRow(
+            idempotency_key=row["idempotency_key"],
+            tool=row["tool"],
+            session_id=row["session_id"],
+            usage_date=row["usage_date"],
+            usage_key=row["usage_key"],
+            payload_hash=row["payload_hash"],
+            payload=json.loads(row["payload"]),
+            status=row["status"],
+            error_code=row["error_code"],
+            error_message=row["error_message"],
+            attempts=int(row["attempts"]),
+            updated_at=row["updated_at"],
+        )
+
+    def activity(self, key: str) -> ActivityRow | None:
+        row = self.db.execute("SELECT * FROM activity WHERE idempotency_key = ?", (key,)).fetchone()
+        return self._activity_row(row) if row is not None else None
+
+    def activities(self, status: str | None = None) -> Iterator[ActivityRow]:
+        if status is None:
+            cursor = self.db.execute("SELECT * FROM activity ORDER BY usage_date, idempotency_key")
+        else:
+            cursor = self.db.execute(
+                "SELECT * FROM activity WHERE status = ? ORDER BY usage_date, idempotency_key", (status,)
+            )
+        for row in cursor.fetchall():
+            yield self._activity_row(row)
+
+    def activity_status_counts(self) -> dict[str, int]:
+        return {
+            row["status"]: int(row["n"])
+            for row in self.db.execute("SELECT status, COUNT(*) AS n FROM activity GROUP BY status")
+        }
+
+    def activity_error_counts(self) -> dict[str, int]:
+        return {
+            row["error_code"]: int(row["n"])
+            for row in self.db.execute(
+                "SELECT error_code, COUNT(*) AS n FROM activity WHERE error_code IS NOT NULL GROUP BY error_code"
+            )
+        }
+
+    def save_activity(
+        self,
+        wire: dict[str, Any],
+        payload_hash: str,
+        status: str,
+        *,
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        key = wire["idempotency_key"]
+        current = self.activity(key)
+        self.db.execute(
+            "INSERT OR REPLACE INTO activity (idempotency_key, tool, session_id, usage_date, usage_key, payload_hash,"
+            " payload, status, error_code, error_message, attempts, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                key,
+                wire["tool"],
+                wire["session_id"],
+                wire["usage_date"],
+                wire["usage_key"],
+                payload_hash,
+                json.dumps(wire, sort_keys=True),
+                status,
+                error_code,
+                error_message,
+                (current.attempts if current else 0) + 1,
                 _now(),
             ),
         )

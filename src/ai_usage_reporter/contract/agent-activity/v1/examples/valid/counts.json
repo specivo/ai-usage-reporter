@@ -1,0 +1,75 @@
+{
+  "schema": "specivo.agent-activity.v1",
+  "client": {
+    "name": "ai-usage-reporter",
+    "version": "1.4.0"
+  },
+  "records": [
+    {
+      "idempotency_key": "example-activity-counts",
+      "usage_key": "example-usage-anchor",
+      "tool": "claude-code",
+      "session_id": "example-session",
+      "usage_date": "2026-11-05",
+      "level": "counts",
+      "activity_version": 1,
+      "categories": {
+        "read": {
+          "count": 41,
+          "seconds": 95
+        },
+        "search": {
+          "count": 17,
+          "seconds": 22
+        },
+        "edit": {
+          "count": 23,
+          "seconds": 140
+        },
+        "shell": {
+          "count": 9,
+          "seconds": 310
+        },
+        "test": {
+          "count": 4,
+          "seconds": 620
+        },
+        "git": {
+          "count": 6,
+          "seconds": 12
+        },
+        "subagent": {
+          "count": 1,
+          "seconds": 900
+        }
+      },
+      "thread": null,
+      "thread_kind": "main",
+      "files_changed": 7,
+      "lines_added": 214,
+      "lines_removed": 58,
+      "subagents_spawned": 1,
+      "test_runs": {
+        "count": 4,
+        "failed": 1
+      },
+      "timeline": [
+        [
+          "2026-11-05T09:02:10Z",
+          "2026-11-05T09:20:00Z",
+          "read"
+        ],
+        [
+          "2026-11-05T09:20:00Z",
+          "2026-11-05T09:48:30Z",
+          "edit"
+        ],
+        [
+          "2026-11-05T16:55:00+07:00",
+          "2026-11-05T17:15:00+07:00",
+          "test"
+        ]
+      ]
+    }
+  ]
+}
