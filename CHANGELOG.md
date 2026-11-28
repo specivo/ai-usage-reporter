@@ -3,6 +3,24 @@
 Release notes of `specivo-ai-usage-reporter`. Install a release with
 `uv tool install git+https://github.com/specivo/ai-usage-reporter@vX.Y.Z` (or `pipx install`).
 
+## 0.5.0
+
+Measured active time, and Codex issue marks from current rollouts.
+
+- **Active time** (Claude Code): the reporter measures how long the agent actually worked from the
+  transcript's timestamps (definition version 1: tool runs paired by call id up to 60 minutes, gaps
+  between events up to 10 minutes, nothing across a turn boundary, no time waiting for a person,
+  a background job or a subagent's hand-back). Each record gets `active_time_version`,
+  `active_seconds` and `active_spans`, sent only to servers that list all three; the time follows
+  the record's tokens, so it lands on the same issue, day and model. `active_time = false` in the
+  config sends none of it. `doctor` shows the hours measured in the last 7 days per source.
+- After upgrading, the next push reads every Claude Code transcript again and, against a server
+  that takes the fields, resends past records with their time. If a server refuses the time, the
+  record's tokens are sent without it.
+- Fixed: Codex rollouts written since September log MCP calls as `item_completed` /
+  `McpToolCall` items, so their issue marks were missed. They are read now (older rollouts as
+  before); the next push re-reads Codex rollouts and resends sessions whose issue split changed.
+
 ## 0.4.1
 
 Documentation: keeping other work out of Specivo issues.
