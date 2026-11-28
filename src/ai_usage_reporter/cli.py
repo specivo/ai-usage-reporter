@@ -25,7 +25,7 @@ from typing import Any, TextIO
 
 from ai_usage_reporter import CONTRACT_VERSION, __version__
 from ai_usage_reporter import schedule as schedules
-from ai_usage_reporter.adapters import load_adapters
+from ai_usage_reporter.adapters import Registry, load_adapters
 from ai_usage_reporter.adapters._jsonl import zstd_available
 from ai_usage_reporter.apikey import KeyFileError, keyring_available, resolve_api_key, store_api_key
 from ai_usage_reporter.config import (
@@ -112,9 +112,20 @@ def _session_issues(state: State | None, selection: Selection, env: dict[str, st
 
 
 def _collect(
-    args: argparse.Namespace, config: Config, state: State | None, selection: Selection, *, store_hints: bool
+    args: argparse.Namespace,
+    config: Config,
+    state: State | None,
+    selection: Selection,
+    *,
+    store_hints: bool,
+    registry: Registry | None = None,
 ) -> Collected:
-    registry = load_adapters()
+    """Collect as a push does: with the session hints and git hints, so a preview builds the same records.
+
+    ``doctor``, ``show-payload`` and ``push --dry-run`` call it on a scratch copy of the state
+    (*store_hints* false), so their "would send" counts match what a push sends.
+    """
+    registry = registry or load_adapters()
     issues = _session_issues(state, selection, dict(os.environ), store=store_hints)
     git = _git(args, config)
     return collect(config, registry, selection=selection, state=state, git=git, session_issues=issues)
@@ -236,19 +247,10 @@ def cmd_push(args: argparse.Namespace) -> int:
     selection = _selection(args)
     _check_sources(selection)
     if args.dry_run:
-        # Nothing is written: no cache, no ledger, no captured hints.
-        existing = State(state_path) if state_path.exists() else None
-        try:
-            hints = _session_issues(existing, selection, dict(os.environ), store=False)
-        finally:
-            if existing is not None:
-                existing.close()
-        git = _git(args, config)
-        # On a copy of the state: what a push would send now, with nothing written.
+        # Nothing is written: no cache, no ledger, no captured hints. On a copy of the state: what a push
+        # would send now.
         with State.scratch_copy(state_path) as scratch:
-            collected = collect(
-                config, load_adapters(), selection=selection, state=scratch, git=git, session_issues=hints
-            )
+            collected = _collect(args, config, scratch, selection, store_hints=False)
             wires, preview = _would_send(collected, scratch, selection, everything=args.all)
         sink = _make_sink(args, config, cfg_path)
         sink.send(wires)
@@ -313,15 +315,8 @@ def cmd_show_payload(args: argparse.Namespace) -> int:
     config, _cfg_path, state_path = _load(args)
     selection = _selection(args)
     _check_sources(selection)
-    existing = State(state_path) if state_path.exists() else None
-    try:
-        hints = _session_issues(existing, selection, dict(os.environ), store=False)
-    finally:
-        if existing is not None:
-            existing.close()
-    git = _git(args, config)
     with State.scratch_copy(state_path) as scratch:
-        collected = collect(config, load_adapters(), selection=selection, state=scratch, git=git, session_issues=hints)
+        collected = _collect(args, config, scratch, selection, store_hints=False)
         wires, preview = _would_send(collected, scratch, selection, everything=args.all)
     batches = [wires[i : i + 500] for i in range(0, len(wires), 500)] or [[]]
     for batch in batches:
@@ -443,9 +438,10 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         problems += 1
     preview: DeliverySummary | None = None
     if state_path.exists():
-        # On a copy of the state, as a push collects (sources such as hermes count from it).
+        # On a copy of the state, collected as a push collects (with the session and git hints, so the
+        # records and their hashes are the ones a push compares with the ledger).
         with State.scratch_copy(state_path) as scratch:
-            collected = collect(config, registry, state=scratch, git=None)
+            collected = _collect(args, config, scratch, Selection(), store_hints=False, registry=registry)
             _wires, preview = _would_send(collected, scratch, Selection(), everything=False)
     else:
         collected = collect(config, registry, git=None)
