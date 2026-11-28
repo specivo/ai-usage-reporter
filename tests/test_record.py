@@ -150,7 +150,16 @@ def test_route_and_billing_account_go_on_the_wire_when_they_fit() -> None:
     assert wire["route"] == "llm-gateway.example.com"
     assert wire["billing_account"] == "acme-gateway"
     validate_records([wire])
-    assert set(OPTIONAL_FIELDS) == {"route", "billing_account", "parent_session_id", "unattended", "profile"}
+    assert set(OPTIONAL_FIELDS) == {
+        "route",
+        "billing_account",
+        "parent_session_id",
+        "unattended",
+        "profile",
+        "active_time_version",
+        "active_seconds",
+        "active_spans",
+    }
 
 
 @pytest.mark.parametrize(

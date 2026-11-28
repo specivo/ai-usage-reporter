@@ -28,6 +28,10 @@
     "hermes-cron.json": [
       {"status": "created", "method": "explicit", "issue_ref": null, "project_key": "ACME", "payer": "unknown", "billing_account": null},
       {"status": "created", "method": "explicit", "issue_ref": null, "project_key": "ACME", "payer": "unknown", "billing_account": null}
+    ],
+    "active-time.json": [
+      {"status": "created", "method": "none", "issue_ref": null, "project_key": null, "payer": "unknown", "billing_account": null},
+      {"status": "created", "method": "none", "issue_ref": null, "project_key": null, "payer": "unknown", "billing_account": null}
     ]
   },
   "invalid": {
@@ -59,6 +63,19 @@
         {"code": "invalid_record", "field": "unattended", "schema_valid": false},
         {"code": "invalid_record", "field": "profile", "schema_valid": false},
         {"code": "invalid_record", "field": "parent_session_id", "schema_valid": false}
+      ]
+    },
+    "active-time-errors.json": {
+      "http_status": 200,
+      "schema_valid": false,
+      "records": [
+        {"code": "invalid_record", "field": "active_time_version", "schema_valid": true},
+        {"code": "invalid_record", "field": "active_seconds", "schema_valid": false},
+        {"code": "invalid_record", "field": "active_time_version", "schema_valid": false},
+        {"code": "invalid_record", "field": "active_spans.0", "schema_valid": false},
+        {"code": "invalid_record", "field": "active_spans", "schema_valid": true},
+        {"code": "invalid_record", "field": "active_spans", "schema_valid": true},
+        {"code": "invalid_record", "field": "active_spans", "schema_valid": true}
       ]
     }
   }

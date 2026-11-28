@@ -19,6 +19,9 @@ For each bucket:
   bucket's main working directory, the one the repository comes from.
 - ``reported_cost``: the sum of the costs the tool logged, when it logged one
   for every request of the bucket (OpenCode does).
+- ``active_time_version``, ``active_seconds`` and ``active_spans``: the
+  bucket's measured active time, when its session was measured and the
+  ``active_time`` setting is on.
 
 The working directory is read here, locally, and never copied into a record.
 
@@ -39,8 +42,9 @@ import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
+from ai_usage_reporter.activity import ACTIVE_TIME_VERSION, round_seconds
 from ai_usage_reporter.aggregate import Bucket
 from ai_usage_reporter.config import Config
 from ai_usage_reporter.record import (
@@ -206,6 +210,7 @@ class Enricher:
         rule = self.config.cost_for(bucket.tool, bucket.model, repo, route=bucket.route, cwd=cwd)
         cost = bucket.reported_cost
         reported = Money(format_amount(cost[0]), cost[1]) if cost is not None else None
+        measured = self.config.active_time and bucket.active_measured
         return ContractRecord(
             idempotency_key=key,
             tool=bucket.tool,
@@ -230,4 +235,12 @@ class Enricher:
             unattended=bucket.unattended,
             profile=bucket.profile,
             route=bucket.route,
+            active_time_version=ACTIVE_TIME_VERSION if measured else None,
+            active_seconds=round_seconds(bucket.active_seconds) if measured else None,
+            active_spans=tuple(
+                (datetime.fromtimestamp(start, tz=UTC), datetime.fromtimestamp(end, tz=UTC))
+                for start, end in bucket.active_spans
+            )
+            if measured
+            else None,
         )

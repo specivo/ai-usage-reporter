@@ -45,6 +45,7 @@ from ai_usage_reporter.hooks import uninstall as uninstall_hook
 from ai_usage_reporter.hooks.runner import run_hook, run_hook_push
 from ai_usage_reporter.importers.ccusage import CcusageFormatError, import_report
 from ai_usage_reporter.pipeline import (
+    MEASURED_DAYS,
     Collected,
     DeliverySummary,
     Selection,
@@ -299,6 +300,12 @@ def cmd_push(args: argparse.Namespace) -> int:
             " agent's log (the server does not take it, or could not use it)",
             file=sys.stderr,
         )
+    if summary.active_time_resent:
+        print(
+            f"{summary.active_time_resent} records went without their active time (the server refused it;"
+            " check the clock difference with ai-usage doctor)",
+            file=sys.stderr,
+        )
     return 1 if summary.statuses.get("pending") else 0
 
 
@@ -452,6 +459,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             f" {report.skipped_events} unusable usage lines, {report.failed_files} unreadable files"
         )
         print(f"  {report.events} requests, {report.after_dedup} after dedup, {report.excluded} excluded")
+        if report.thread_events:
+            print(
+                f"  active time: {report.measured_seconds / 3600:.1f} h measured in the last {MEASURED_DAYS} days,"
+                f" {report.unplaced_seconds:.0f} s unplaced (no request to give them to; not sent)"
+            )
+        else:
+            print("  active time: not measured (no thread events from this source)")
         if report.busy_files:
             print(f"  {report.busy_files} files locked by the tool right now; they are read on the next run")
         for message in report.schema_errors:

@@ -15,7 +15,9 @@ every command that prints a payload goes through :func:`to_wire`.
 
 Properties added within v1 (:data:`OPTIONAL_FIELDS`) are built like the others;
 :func:`gate_optional_fields` removes the ones a server does not list in its
-``optional_fields``, so they only reach servers that accept them.
+``optional_fields``, so they only reach servers that accept them. The three
+active time properties (:data:`ACTIVE_TIME_FIELDS`) go as a group: all three,
+or none when a server lists only some of them or a value does not fit.
 """
 
 from __future__ import annotations
@@ -25,19 +27,28 @@ import json
 import re
 from collections.abc import Collection
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
+from ai_usage_reporter.activity import wire_spans
 from ai_usage_reporter.model import TOKEN_CLASSES, TokenCounts
 
 COST_TYPES = ("subscription", "api", "local", "free", "unknown")
 #: Where an issue_ref came from: the person named it, SPECIVO_ISSUE, or the agent's own Specivo calls.
 ISSUE_REF_SOURCES = ("explicit", "env", "agent_log")
 AGENT_LOG = "agent_log"
+#: Measured active time: sent all three or none (see :mod:`ai_usage_reporter.activity`).
+ACTIVE_TIME_FIELDS = ("active_time_version", "active_seconds", "active_spans")
 #: Record properties added within v1: sent only to a server that lists them in ``optional_fields``.
-OPTIONAL_FIELDS = ("route", "billing_account", "parent_session_id", "unattended", "profile")
+OPTIONAL_FIELDS = ("route", "billing_account", "parent_session_id", "unattended", "profile", *ACTIVE_TIME_FIELDS)
 MAX_COUNT = 10**12
+MAX_ACTIVE_TIME_VERSION = 32767
+MAX_ACTIVE_SECONDS = 10_000_000
+#: Spans may reach this far before and after the record's UTC day.
+SPAN_DAY_MARGIN = timedelta(hours=24)
+#: Spans never end later than this after the reporter's clock (the server allows 10 minutes).
+SPAN_FUTURE_ALLOWANCE = timedelta(minutes=5)
 MAX_REQUESTS = 100_000_000
 
 _KEY = re.compile(r"^[\x21-\x7e]{1,128}$")
@@ -110,6 +121,11 @@ class ContractRecord:
     unattended: bool = False
     #: The agent profile or home the usage came from, e.g. ``research``.
     profile: str | None = None
+    #: Measured active time: the definition version, the summed seconds of all threads, and the union of
+    #: their active intervals (merged, sorted). Sent all three or none.
+    active_time_version: int | None = None
+    active_seconds: int | None = None
+    active_spans: tuple[tuple[datetime, datetime], ...] | None = None
 
     def to_wire(self) -> dict[str, Any]:
         return to_wire(self)
@@ -186,6 +202,34 @@ def _instant(value: datetime) -> str:
     if value.microsecond:
         text += f".{value.microsecond:06d}".rstrip("0")
     return text + "Z"
+
+
+def _second(value: int) -> str:
+    return datetime.fromtimestamp(value, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _active_time(record: ContractRecord) -> dict[str, Any] | None:
+    """The three active time properties, or ``None`` when any is missing or does not fit."""
+    version, seconds, spans = record.active_time_version, record.active_seconds, record.active_spans
+    if version is None or seconds is None or spans is None:
+        return None
+    if isinstance(version, bool) or not isinstance(version, int) or not 1 <= version <= MAX_ACTIVE_TIME_VERSION:
+        return None
+    if isinstance(seconds, bool) or not isinstance(seconds, int) or not 0 <= seconds <= MAX_ACTIVE_SECONDS:
+        return None
+    day = datetime(record.usage_date.year, record.usage_date.month, record.usage_date.day, tzinfo=UTC)
+    low = day - SPAN_DAY_MARGIN
+    high = min(day + timedelta(days=1) + SPAN_DAY_MARGIN, datetime.now(UTC) + SPAN_FUTURE_ALLOWANCE)
+    whole = wire_spans(
+        ((start.timestamp(), end.timestamp()) for start, end in spans), seconds, (low.timestamp(), high.timestamp())
+    )
+    if whole is None:
+        return None
+    return {
+        "active_time_version": version,
+        "active_seconds": seconds,
+        "active_spans": [[_second(start), _second(end)] for start, end in whole],
+    }
 
 
 def _text(value: str | None, max_length: int, *, min_length: int = 1) -> str | None:
@@ -281,12 +325,23 @@ def to_wire(record: ContractRecord) -> dict[str, Any]:
     attribution = _attribution(record.attribution)
     if attribution:
         wire["attribution"] = attribution
+    active = _active_time(record)
+    if active:
+        wire.update(active)
     return wire
 
 
 def gate_optional_fields(wire: dict[str, Any], accepted: Collection[str]) -> dict[str, Any]:
-    """*wire* without the :data:`OPTIONAL_FIELDS` that are not in *accepted*; *wire* itself when nothing goes."""
-    drop = [name for name in OPTIONAL_FIELDS if name in wire and name not in accepted]
+    """*wire* without the :data:`OPTIONAL_FIELDS` that are not in *accepted*; *wire* itself when nothing goes.
+
+    The :data:`ACTIVE_TIME_FIELDS` go together: unless *accepted* lists all three, none of them is sent.
+    """
+    group = all(name in accepted for name in ACTIVE_TIME_FIELDS)
+    drop = [
+        name
+        for name in OPTIONAL_FIELDS
+        if name in wire and (name not in accepted or (name in ACTIVE_TIME_FIELDS and not group))
+    ]
     if not drop:
         return wire
     return {key: value for key, value in wire.items() if key not in drop}

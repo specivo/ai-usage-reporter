@@ -1,5 +1,13 @@
 [
   {
+    "active_seconds": 61,
+    "active_spans": [
+      [
+        "2026-10-05T23:40:00Z",
+        "2026-10-05T23:41:01Z"
+      ]
+    ],
+    "active_time_version": 1,
     "attribution": {
       "git_branch": "main"
     },
@@ -22,6 +30,14 @@
     "usage_date": "2026-10-05"
   },
   {
+    "active_seconds": 9,
+    "active_spans": [
+      [
+        "2026-10-06T00:06:31Z",
+        "2026-10-06T00:06:40Z"
+      ]
+    ],
+    "active_time_version": 1,
     "attribution": {
       "git_branch": "main"
     },
@@ -41,6 +57,9 @@
     "usage_date": "2026-10-06"
   },
   {
+    "active_seconds": 0,
+    "active_spans": [],
+    "active_time_version": 1,
     "attribution": {
       "git_branch": "main"
     },
@@ -61,6 +80,18 @@
     "usage_date": "2026-10-06"
   },
   {
+    "active_seconds": 241,
+    "active_spans": [
+      [
+        "2026-10-05T23:41:01Z",
+        "2026-10-05T23:42:00Z"
+      ],
+      [
+        "2026-10-06T00:05:00Z",
+        "2026-10-06T00:08:01Z"
+      ]
+    ],
+    "active_time_version": 1,
     "attribution": {
       "git_branch": "main"
     },
@@ -81,6 +112,9 @@
     "usage_date": "2026-10-06"
   },
   {
+    "active_seconds": 0,
+    "active_spans": [],
+    "active_time_version": 1,
     "attribution": {
       "git_branch": "feat/acme-12-login"
     },
