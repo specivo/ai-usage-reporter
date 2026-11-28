@@ -503,6 +503,11 @@ def cmd_time(args: argparse.Namespace) -> int:
             " not measured: records of sources without active time.",
             file=sys.stderr,
         )
+    if collected.too_old:
+        print(
+            f"{collected.too_old} buckets older than the server keeps were left out (a push sends none of them).",
+            file=sys.stderr,
+        )
     if not config.active_time:
         print(
             "active_time = false in the config: these values are measured here and would not be sent.", file=sys.stderr
