@@ -3,6 +3,34 @@
 Release notes of `specivo-ai-usage-reporter`. Install a release with
 `uv tool install git+https://github.com/specivo/ai-usage-reporter@vX.Y.Z` (or `pipx install`).
 
+## 0.7.0
+
+Work activity summaries: what the agent did on your machine, as counts and durations.
+
+- **Work activity** (Claude Code and Codex): per session, thread (main or subagent), UTC day and
+  issue segment, the reporter summarises the agent's tool runs by category (`read`, `search`,
+  `edit`, `shell`, `test`, `git`, `web`, `subagent`, `mcp`, `other`) with their seconds, the
+  files changed, lines added and removed, test runs and failures, subagents started, and a
+  category-labelled timeline. It comes from the same pass over the transcript as active time, so a
+  run lands on the same day and issue as the request that owns it. Shell commands are classified
+  (test, git or shell) in memory and dropped.
+- Sent as `specivo.agent-activity.v1` records (contract vendored) to their own endpoint, after the
+  usage and with the same API key, anchored to the usage record of their group. **Nothing is sent
+  unless the server answers the activity endpoint** (Specivo 0.16.0 or later); a server without it
+  gets none and the usage push is unaffected.
+- **Privacy levels**: `[activity] level` is `counts` by default (counts, durations and times only,
+  never a name, command, path or content), or `off` (nothing). `[activity.repos]` sets a level per
+  repository pattern, the first match winning. A session whose repository is unknown gets the
+  lowest of the global level, `counts` and every pattern's level. `names` and `commits` are
+  accepted but send `counts` for now.
+- `show-payload` and `push --dry-run` print the activity records a push would send after the usage
+  batch, in their own envelope (standard output now holds two JSON documents when there is
+  activity); `doctor` shows the levels, the records per source and whether the server takes
+  activity. Records waiting for their usage record, or refused with `usage_not_found` or
+  `internal_error`, are sent again on the next push.
+- After upgrading, the next push reads every Claude Code transcript and Codex rollout again
+  (parser versions changed); usage records are unchanged, so nothing is resent for them.
+
 ## 0.6.0
 
 Active time for Codex, Codex subagents under their parent session, and a fix to `doctor`'s count.
