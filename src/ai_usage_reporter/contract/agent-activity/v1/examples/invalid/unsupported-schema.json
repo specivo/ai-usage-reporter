@@ -1,0 +1,19 @@
+{
+  "schema": "specivo.agent-activity.v9",
+  "client": {
+    "name": "ai-usage-reporter",
+    "version": "1.4.0"
+  },
+  "records": [
+    {
+      "idempotency_key": "example-activity-minimal",
+      "usage_key": "example-usage-anchor",
+      "tool": "claude-code",
+      "session_id": "example-session",
+      "usage_date": "2026-11-05",
+      "level": "counts",
+      "activity_version": 1,
+      "categories": {}
+    }
+  ]
+}

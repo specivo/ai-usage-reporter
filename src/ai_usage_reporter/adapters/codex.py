@@ -92,7 +92,27 @@ What the rollout format looks like, and what this adapter does with it:
     ``SubAgentActivity`` and other items give no event.
 
   Items are logged when they complete, so the events are sorted by their own
-  time. An event is named by its ``turn_id`` and ``item.id``, so a copied line
+  time.
+- **Work activity.** The tool events also carry what
+  :mod:`ai_usage_reporter.work_activity` summarises, read in memory and reduced at
+  once (no command, path, diff or output is kept):
+
+  - the category: ``CommandExecution`` by its ``parsed_cmd[].type`` (``read``
+    read; ``search`` and ``list_files`` search; ``unknown``, or none, by
+    :func:`~ai_usage_reporter.work_activity.classify_argv` of ``command``:
+    test, git or shell); ``FileChange`` edit; ``McpToolCall`` mcp;
+    ``Extension`` web; ``ImageView`` read; ``CollabAgentToolCall`` subagent; a
+    user-input request other;
+  - failure: a ``CommandExecution`` with ``exit_code`` other than 0 or
+    ``status`` ``failed``; an ``McpToolCall`` with ``status`` ``failed`` or
+    ``result.isError``; a ``FileChange`` or ``CollabAgentToolCall`` whose
+    ``status`` is not ``completed``;
+  - for a ``FileChange``: per changed file, lines added (an ``add`` counts its
+    ``content``'s lines, an ``update`` the ``+`` and ``-`` lines of its
+    ``unified_diff``, a ``delete`` none) and the file as a local hash of its path;
+  - a ``SubAgentActivity`` of ``kind`` ``started`` is a subagent the thread
+    started (a ``spawn`` note, which active time ignores); it is the only source
+    of spawns, so a subagent is counted once. An event is named by its ``turn_id`` and ``item.id``, so a copied line
   counts once. Only timestamps, ids, the item's type and the collaboration
   tool's name are read for this; no command, argument, output or message.
 """
@@ -103,6 +123,7 @@ import re
 from collections.abc import Iterable, Iterator
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from ai_usage_reporter.adapters import DiscoveryContext, HookSpec
 from ai_usage_reporter.adapters._jsonl import get_dict, get_str, iter_json_lines, zstd_available
@@ -111,6 +132,7 @@ from ai_usage_reporter.issue_marks import CREATE, created_issue, marking_call
 from ai_usage_reporter.model import (
     MODEL,
     PROMPT,
+    SPAWN,
     TOOL_END,
     TOOL_START,
     TURN_END,
@@ -120,6 +142,13 @@ from ai_usage_reporter.model import (
     UsageEvent,
     count,
     parse_timestamp,
+)
+from ai_usage_reporter.work_activity import (
+    classify_argv,
+    classify_command,
+    file_identity,
+    text_lines,
+    unified_diff_lines,
 )
 
 _UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
@@ -142,6 +171,75 @@ _SAME_MOMENT = timedelta(seconds=2)
 _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
 Raw = tuple[int, int, int, int]
+#: Work activity categories of tool items (``CommandExecution`` is decided apart).
+ITEM_CATEGORIES = {
+    "FileChange": "edit",
+    "McpToolCall": "mcp",
+    "Extension": "web",
+    "ImageView": "read",
+    "CollabAgentToolCall": "subagent",
+}
+
+
+def command_category(item: dict[str, object]) -> str:
+    """The category of a ``CommandExecution``; its command is read here and dropped."""
+    parsed = item.get("parsed_cmd")
+    kinds = (
+        {get_str(entry, "type") for entry in parsed if isinstance(entry, dict)} if isinstance(parsed, list) else set()
+    )
+    if kinds and "unknown" not in kinds and None not in kinds:
+        return "search" if kinds & {"search", "list_files"} else "read"
+    command = item.get("command")
+    if isinstance(command, list):
+        return classify_argv([str(word) for word in command])
+    return classify_command(command) if isinstance(command, str) else "shell"
+
+
+def item_category(item_type: str, item: dict[str, object]) -> str:
+    if item_type == "CommandExecution":
+        return command_category(item)
+    return ITEM_CATEGORIES.get(item_type, "other")
+
+
+def item_detail(item_type: str, item: dict[str, object]) -> dict[str, Any]:
+    """Failure, lines and hashed files of a completed tool item (see the module docs); nothing else is kept."""
+    status = item.get("status")
+    if item_type == "CommandExecution":
+        code = item.get("exit_code")
+        failed = status == "failed" or (isinstance(code, int) and not isinstance(code, bool) and code != 0)
+        return {"failed": failed}
+    if item_type == "McpToolCall":
+        result = item.get("result")
+        return {"failed": status == "failed" or (isinstance(result, dict) and result.get("isError") is True)}
+    if item_type == "CollabAgentToolCall":
+        return {"failed": status not in (None, "completed")}
+    if item_type != "FileChange":
+        return {}
+    if status not in (None, "completed"):
+        return {"failed": True}
+    changes = item.get("changes")
+    pairs: list[tuple[object, object]] = []
+    if isinstance(changes, dict):
+        pairs = list(changes.items())
+    elif isinstance(changes, list):
+        pairs = [(c.get("path"), c) for c in changes if isinstance(c, dict)]
+    added = removed = 0
+    files: list[str] = []
+    for path, change in pairs:
+        if not isinstance(change, dict):
+            continue
+        kind = change.get("type") or change.get("kind")
+        if isinstance(kind, dict):
+            kind = kind.get("type")
+        diff = change.get("unified_diff") if isinstance(change.get("unified_diff"), str) else change.get("diff")
+        if kind == "add" and isinstance(change.get("content"), str):
+            added += text_lines(str(change["content"]))
+        elif kind == "update" and isinstance(diff, str):
+            plus, minus = unified_diff_lines(diff)
+            added, removed = added + plus, removed + minus
+        if isinstance(path, str) and path:
+            files.append(file_identity(path))
+    return {"lines_added": added, "lines_removed": removed, "files": tuple(dict.fromkeys(files))}
 
 
 def _raw(value: object) -> Raw | None:
@@ -190,7 +288,7 @@ def codex_homes(ctx: DiscoveryContext) -> list[Path]:
 class CodexAdapter:
     name = "codex"
     provider = "openai"
-    parser_version = "codex/5"
+    parser_version = "codex/6"
 
     def discover(self, ctx: DiscoveryContext) -> Iterable[SourceFile]:
         can_decompress = zstd_available()
@@ -398,6 +496,9 @@ class CodexAdapter:
         if item is None:
             return
         item_type = get_str(item, "type") or ""
+        if item_type == "SubAgentActivity":
+            yield from self._spawn_event(line, payload, item, session, child)
+            return
         tool = get_str(item, "tool")
         human_wait = _CAMEL.sub("_", item_type).lower().startswith(HUMAN_WAIT_PREFIX) or bool(
             tool and tool.lower().startswith(HUMAN_WAIT_PREFIX)
@@ -421,11 +522,43 @@ class CodexAdapter:
             "human_wait": human_wait,
             "subagent_wait": item_type == "CollabAgentToolCall" and tool == SUBAGENT_WAIT_TOOL,
         }
+        category = "other" if human_wait else item_category(item_type, item)
+        detail = item_detail(item_type, item)
         for when, name in ((started, TOOL_START), (completed, TOOL_END)):
             if when is not None:
                 yield self._thread_event(
-                    session, child, when, name, call_id=item_id, key=f"{turn}|{item_id}|{name}", **flags
+                    session,
+                    child,
+                    when,
+                    name,
+                    call_id=item_id,
+                    key=f"{turn}|{item_id}|{name}",
+                    category=category,
+                    # The run's detail goes on one event of the pair, so it is counted once.
+                    **(detail if name == TOOL_END else {}),
+                    **flags,
                 )
+
+    def _spawn_event(
+        self,
+        line: dict[str, object],
+        payload: dict[str, object],
+        item: dict[str, object],
+        session: str,
+        child: str | None,
+    ) -> Iterator[ThreadEvent]:
+        """A ``spawn`` note for a ``SubAgentActivity`` that started a subagent."""
+        if get_str(item, "kind") != "started":
+            return
+        when = (
+            parse_timestamp(payload.get("started_at_ms"))
+            or parse_timestamp(payload.get("completed_at_ms"))
+            or parse_timestamp(line.get("timestamp"))
+        )
+        if when is None:
+            return
+        origin = f"{get_str(payload, 'turn_id') or ''}|{get_str(item, 'id') or when.isoformat()}"
+        yield self._thread_event(session, child, when, SPAWN, key=f"{origin}|{SPAWN}")
 
     def _thread_event(
         self,
@@ -438,6 +571,7 @@ class CodexAdapter:
         call_id: str | None = None,
         human_wait: bool = False,
         subagent_wait: bool = False,
+        **detail: Any,
     ) -> ThreadEvent:
         return ThreadEvent(
             tool=self.name,
@@ -449,6 +583,7 @@ class CodexAdapter:
             human_wait=human_wait,
             subagent_wait=subagent_wait,
             key=key,
+            **detail,
         )
 
     @staticmethod

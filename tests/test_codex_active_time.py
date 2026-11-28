@@ -18,7 +18,7 @@ import pytest
 from ai_usage_reporter.adapters import DiscoveryContext, Registry, parse_all
 from ai_usage_reporter.adapters.codex import CodexAdapter
 from ai_usage_reporter.config import Config
-from ai_usage_reporter.model import MODEL, PROMPT, TOOL_END, TOOL_START, TURN_END, ThreadEvent, UsageEvent
+from ai_usage_reporter.model import MODEL, PROMPT, SPAWN, TOOL_END, TOOL_START, TURN_END, ThreadEvent, UsageEvent
 from ai_usage_reporter.pipeline import Collected, Selection, collect, deliver
 from ai_usage_reporter.record import ACTIVE_TIME_FIELDS, OPTIONAL_FIELDS, opaque_session_id
 from ai_usage_reporter.sinks.specivo import SpecivoSink
@@ -257,7 +257,9 @@ def test_items_that_are_no_events(tmp_path: Path) -> None:
     r.item("08:00:06", "08:00:07", "SomethingNew")
     r.usage("08:00:08").end("08:00:09")
     r.write(tmp_path)
-    assert [e.kind for e in thread_events(tmp_path)] == [PROMPT, TURN_END]
+    # A started subagent is a spawn note for work activity, which active time never sees.
+    assert [e.kind for e in thread_events(tmp_path)] == [PROMPT, SPAWN, TURN_END]
+    assert one(wires(tmp_path))["active_seconds"] == 9
 
 
 def test_malformed_items_and_turns(tmp_path: Path) -> None:

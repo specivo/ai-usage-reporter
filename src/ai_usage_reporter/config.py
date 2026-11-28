@@ -29,6 +29,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path, PurePath
 from typing import Any
 
+from ai_usage_reporter.activity_record import BUILT_LEVEL, COUNTS, DEFAULT_LEVEL, LEVELS, lowest_level
 from ai_usage_reporter.record import BILLING_ACCOUNT, COST_TYPES
 
 APP_DIR = "ai-usage-reporter"
@@ -205,6 +206,10 @@ class Config:
     cost_rules: tuple[CostRule, ...] = ()
     projects: Mapping[str, str] = field(default_factory=dict)
     long_context: Mapping[str, int] = field(default_factory=dict)
+    #: ``[activity] level``: how much work activity to send (``off``, ``counts``, ``names``, ``commits``).
+    activity_level: str = DEFAULT_LEVEL
+    #: ``[activity.repos]``: repository pattern -> level; the first match wins.
+    activity_repos: Mapping[str, str] = field(default_factory=dict)
     path: Path | None = None
 
     def source(self, name: str) -> SourceSettings:
@@ -234,6 +239,44 @@ class Config:
             return self.source(tool).project
         return None
 
+    def activity_level_for(self, repo: str | None) -> str:
+        """The configured work activity level of a session in *repo* (``host/owner/repo``, ``None``: unknown).
+
+        The first ``[activity.repos]`` pattern matching the repository wins (patterns match as in
+        ``[projects]``), else ``[activity] level``. A session whose repository is unknown (no git, no
+        remote, git enrichment off) could be in any of the listed repositories, so it gets the lowest of
+        the global level, ``counts`` and every pattern's level: one ``"off"`` pattern holds it back.
+        """
+        if repo is not None:
+            for pattern, level in self.activity_repos.items():
+                if fnmatchcase(repo.lower(), pattern.lower()):
+                    return level
+            return self.activity_level
+        return lowest_level(self.activity_level, COUNTS, *self.activity_repos.values())
+
+    def activity_sent_level(self, repo: str | None) -> str:
+        """The level records of a session in *repo* are built at: the configured one, at most what is built."""
+        return lowest_level(self.activity_level_for(repo), BUILT_LEVEL)
+
+
+def _parse_activity(data: Mapping[str, Any]) -> tuple[str, dict[str, str]]:
+    table = data.get("activity", {})
+    if not isinstance(table, dict):
+        raise ConfigError("[activity] must be a table")
+    extra = set(table) - {"level", "repos"}
+    if extra:
+        raise ConfigError(f"[activity]: unknown key(s) {', '.join(sorted(extra))}")
+    level = table.get("level", DEFAULT_LEVEL)
+    if level not in LEVELS:
+        raise ConfigError(f"activity.level must be one of {', '.join(LEVELS)}")
+    repos = table.get("repos", {})
+    if not isinstance(repos, dict):
+        raise ConfigError("[activity.repos] maps repository patterns to levels")
+    for pattern, value in repos.items():
+        if value not in LEVELS:
+            raise ConfigError(f"[activity.repos] {pattern!r}: the level must be one of {', '.join(LEVELS)}")
+    return level, dict(repos)
+
 
 def _opt_str(data: Mapping[str, Any], key: str, where: str) -> str | None:
     value = data.get(key)
@@ -254,7 +297,7 @@ def _str_list(data: Mapping[str, Any], key: str, where: str) -> tuple[str, ...]:
 def parse_config(data: Mapping[str, Any], path: Path | None = None) -> Config:
     known = {
         "url", "allow_insecure_http", "timezone", "on_behalf_of", "git_enrichment", "git_commits", "exclude_paths",
-        "agent_log_issues", "active_time", "sources", "cost_rules", "projects", "long_context",
+        "agent_log_issues", "active_time", "sources", "cost_rules", "projects", "long_context", "activity",
     }  # fmt: skip
     unknown = sorted(set(data) - known)
     if unknown:
@@ -334,6 +377,7 @@ def parse_config(data: Mapping[str, Any], path: Path | None = None) -> Config:
         isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in long_context.values()
     ):
         raise ConfigError("[long_context] maps model patterns to positive token thresholds")
+    activity_level, activity_repos = _parse_activity(data)
     url = _opt_str(data, "url", "")
     if url is not None:
         url = check_server_url(url, allow_insecure_http=flags["allow_insecure_http"])
@@ -351,6 +395,8 @@ def parse_config(data: Mapping[str, Any], path: Path | None = None) -> Config:
         cost_rules=tuple(rules),
         projects=dict(projects),
         long_context=dict(long_context),
+        activity_level=activity_level,
+        activity_repos=activity_repos,
         path=path,
     )
 
@@ -396,7 +442,7 @@ agent_log_issues = true
 # Send how long the agent was active in each record: the summed seconds and
 # the intervals (start and end, to the second) when it worked. Measured from
 # the timestamps of prompts, model answers and tool calls; nothing of their
-# content is read. Claude Code only for now.
+# content is read. Claude Code and Codex.
 active_time = true
 
 # Sessions that ran in these directories are never reported.
@@ -444,6 +490,19 @@ exclude_paths = []
 # Models with a long-context price tier: model (patterns allowed) -> threshold in tokens.
 [long_context]
 # "example-model-*" = 200000
+
+# Work activity: a summary of what the agent did on this machine in each session (tool runs by
+# category and their seconds, files changed, lines added and removed, test runs and failures,
+# subagents, a timeline labelled by category). Sent only to a Specivo server that takes it.
+# "counts" (the default) sends counts and durations only, never a name, command, path or content;
+# "off" sends nothing. "names" and "commits" are accepted but send "counts" for now.
+[activity]
+level = "counts"
+
+# Repository (host/owner/repo, patterns allowed) -> level; the first match wins. A session whose
+# repository is unknown gets the lowest of level, "counts" and every level listed here.
+[activity.repos]
+# "github.com/client-x/*" = "off"
 """
 
 

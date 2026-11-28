@@ -2,6 +2,15 @@
 
 ``collect`` turns the local logs into contract records; ``deliver`` sends them
 through a sink and keeps the ledger in the state database.
+
+**Work activity.** ``collect`` also builds one activity record per session,
+thread, UTC day and issue segment (:mod:`ai_usage_reporter.work_activity`): each
+tool run, active piece and spawn goes with the request owning it, so it lands
+on that request's day and issue segment like its active time. A record is
+anchored to the usage record of its session, day and segment with the earliest
+request (``usage_key``), and built at the level the config gives the session's
+repository (none at ``off``). ``deliver_activity`` sends them after the usage, to
+a server that takes them, only once their usage record is in the ledger.
 """
 
 from __future__ import annotations
@@ -16,6 +25,14 @@ from pathlib import Path
 from typing import Any
 
 from ai_usage_reporter.activity import Span, attribute_threads, deduplicate_thread_events
+from ai_usage_reporter.activity_record import (
+    OFF,
+    ActivityRecord,
+    ActivityRecordError,
+    activity_key,
+    lowest_level,
+    thread_hash,
+)
 from ai_usage_reporter.adapters import Adapter, DiscoveryContext, Registry, parse_all
 from ai_usage_reporter.aggregate import Activity, aggregate
 from ai_usage_reporter.config import Config
@@ -42,8 +59,10 @@ from ai_usage_reporter.record import (
 )
 from ai_usage_reporter.segments import segment_issues, split_markers
 from ai_usage_reporter.sinks import PENDING, Outcome, Sink
+from ai_usage_reporter.sinks.specivo import SinkError
 from ai_usage_reporter.state import CONFLICT, REJECTED, SENT, FileIdentity, State
 from ai_usage_reporter.state import PENDING as STATE_PENDING
+from ai_usage_reporter.work_activity import GroupWork, ToolRun, summarise, work_by_thread
 
 #: The contract refuses usage_date older than this many days.
 DEFAULT_MAX_AGE_DAYS = 400
@@ -93,6 +112,11 @@ class SourceReport:
     #: of the last :data:`MEASURED_DAYS` UTC days.
     unplaced_seconds: float = 0.0
     measured_seconds: float = 0.0
+    #: Work activity records built, groups left out because their repository's level is off, and tool runs
+    #: no request owns (not sent).
+    activity_records: int = 0
+    activity_off: int = 0
+    activity_unplaced_runs: int = 0
 
 
 @dataclass(slots=True)
@@ -101,6 +125,22 @@ class Collected:
     reports: dict[str, SourceReport]
     too_old: int = 0
     invalid: int = 0
+    #: Work activity records (``specivo.agent-activity.v1``), sent after the usage records.
+    activity: list[ActivityRecord] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class _Part:
+    """A piece of a thread's work, given to the request (an index into the collected events) owning it."""
+
+    event: int
+    thread: str | None
+    run: ToolRun | None = None
+    piece: tuple[float, float, str | None] | None = None
+    spawn: bool = False
+
+    def moved(self, event: int) -> _Part:
+        return _Part(event, self.thread, self.run, self.piece, self.spawn)
 
 
 ContextFactory = Callable[[Adapter, tuple[Path, ...]], DiscoveryContext]
@@ -209,6 +249,7 @@ def collect(
     events: list[UsageEvent] = []
     activity: list[Activity] = []
     markers: list[UsageEvent] = []
+    parts: list[_Part] = []
     for name in names:
         adapter = registry.get(name)
         if adapter is None:
@@ -242,13 +283,16 @@ def collect(
         report.after_dedup = len(kept_indices)
         kept = [i for i in kept_indices if not _excluded(adapter_usage[i].cwd, excluded)]
         report.excluded = len(kept_indices) - len(kept)
+        position: dict[int, int] = {}
         for index in kept:
             event = adapter_usage[index]
+            position[index] = len(events)
             events.append(event)
             pieces = owned.pieces.get(index)
             measured = pieces is not None or (event.tool, event.session_id) in owned.sessions
             activity.append(tuple(pieces or ()) if measured else None)
         markers.extend(m for m in adapter_markers if not _excluded(m.cwd, excluded))
+        parts.extend(_work_parts(thread_events, adapter_usage, copy_of, position, report))
     if selection.session is not None:
         wanted = selection.session
         # A record holds a session's full totals, so naming a child session (a
@@ -261,6 +305,8 @@ def collect(
         picked = [i for i, e in enumerate(events) if (e.tool, e.session_id) in chosen]
         events = [events[i] for i in picked]
         activity = [activity[i] for i in picked]
+        moved = {old: new for new, old in enumerate(picked)}
+        parts = [part.moved(moved[part.event]) for part in parts if part.event in moved]
     oldest = (now - timedelta(days=max_age_days - 1)).date()
     issues = segment_issues(events, markers) if config.agent_log_issues else None
     buckets = aggregate(events, thresholds, issues, activity)
@@ -282,6 +328,10 @@ def collect(
     )
     records: list[ContractRecord] = []
     invalid = 0
+    #: (tool, session, day, segment issue) -> the record of the bucket with the earliest request.
+    anchors: dict[tuple[str, str, date, str | None], tuple[tuple[datetime, str], ContractRecord]] = {}
+    #: The same groups -> the repositories of all their buckets (the level is the lowest of theirs).
+    group_repos: dict[tuple[str, str, date, str | None], set[str | None]] = {}
     for bucket in buckets:
         record = enricher.record(bucket)
         try:
@@ -290,10 +340,177 @@ def collect(
             invalid += 1
             continue
         records.append(record)
+        group = (bucket.tool, bucket.session_id, bucket.usage_date, bucket.segment_issue)
+        rank = (bucket.started_at, bucket.model)
+        if group not in anchors or rank < anchors[group][0]:
+            anchors[group] = (rank, record)
+        repo = (record.to_wire().get("attribution") or {}).get("repo")
+        group_repos.setdefault(group, set()).add(repo if isinstance(repo, str) else None)
+    try:
+        work = build_activity(
+            config, parts, events, issues, {k: v[1] for k, v in anchors.items()}, reports, now, group_repos
+        )
+    except Exception:  # work activity must never break the usage push
+        work = []
+        for report in reports.values():
+            report.notes.append("work activity could not be summarised this time (nothing of it is sent)")
     if state is not None:
         records.extend(superseded_records(records, state))
+        work.extend(superseded_activity(work, state))
         state.commit()
-    return Collected(records=records, reports=reports, too_old=too_old, invalid=invalid)
+    return Collected(records=records, reports=reports, too_old=too_old, invalid=invalid, activity=work)
+
+
+def _work_parts(
+    thread_events: Sequence[ThreadEvent],
+    usage: Sequence[UsageEvent],
+    copy_of: Sequence[int | None],
+    position: Mapping[int, int],
+    report: SourceReport,
+) -> list[_Part]:
+    """The runs, pieces and spawns of every thread, each given to the collected event that owns it.
+
+    As with active time, a part owned by a request dropped as a copy goes with the copy that is counted,
+    and a part of a request that is not collected (excluded, or its copy is missing) is left out.
+    """
+    out: list[_Part] = []
+    try:
+        threads = work_by_thread(thread_events, usage)
+    except Exception:  # work activity must never break the usage push
+        report.notes.append("work activity could not be summarised this time (nothing of it is sent)")
+        return out
+    for (_tool, _session, thread), work in threads:
+        report.activity_unplaced_runs += work.unplaced_runs
+
+        def collected(index: int) -> int | None:
+            target = copy_of[index]
+            return position.get(target) if target is not None else None
+
+        for index, run in work.runs:
+            if (event := collected(index)) is not None:
+                out.append(_Part(event, thread, run=run))
+        for index, start, end, label in work.pieces:
+            if (event := collected(index)) is not None:
+                out.append(_Part(event, thread, piece=(start, end, label)))
+        for index in work.spawns:
+            if (event := collected(index)) is not None:
+                out.append(_Part(event, thread, spawn=True))
+    return out
+
+
+def build_activity(
+    config: Config,
+    parts: Sequence[_Part],
+    events: Sequence[UsageEvent],
+    issues: Sequence[str | None] | None,
+    anchors: Mapping[tuple[str, str, date, str | None], ContractRecord],
+    reports: Mapping[str, SourceReport],
+    now: datetime,
+    group_repos: Mapping[tuple[str, str, date, str | None], set[str | None]] | None = None,
+) -> list[ActivityRecord]:
+    """One activity record per session, thread, UTC day and issue segment that has work and an anchor record."""
+    groups: dict[tuple[str, str, str | None, date, str | None], GroupWork] = {}
+    for part in parts:
+        event = events[part.event]
+        day = event.timestamp.astimezone(UTC).date()
+        issue = issues[part.event] if issues is not None else None
+        group = groups.setdefault((event.tool, event.session_id, part.thread, day, issue), GroupWork())
+        if part.run is not None:
+            group.runs.append(part.run)
+        if part.piece is not None:
+            group.pieces.append(part.piece)
+        group.spawns += int(part.spawn)
+    out: list[ActivityRecord] = []
+    for (tool, session, thread, day, issue), group in sorted(
+        groups.items(), key=lambda item: (item[0][3], item[0][0], item[0][1], item[0][2] or "", item[0][4] or "")
+    ):
+        anchor = anchors.get((tool, session, day, issue))
+        if anchor is None:
+            continue  # its usage is not reported (too old, before --since, or not expressible)
+        # The work may span every bucket of the group (other models, other folders): the lowest level wins.
+        repos = (group_repos or {}).get((tool, session, day, issue))
+        if not repos:
+            anchor_repo = (anchor.to_wire().get("attribution") or {}).get("repo")
+            repos = {anchor_repo if isinstance(anchor_repo, str) else None}
+        level = lowest_level(*(config.activity_sent_level(repo) for repo in repos))
+        report = reports.get(tool)
+        if level == OFF:
+            if report is not None:
+                report.activity_off += 1
+            continue
+        wire_session = anchor.session_id or session
+        thread_id = thread_hash(tool, wire_session, thread) if thread is not None else None
+        start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+        window = ((start - timedelta(days=1)).timestamp(), min(start + timedelta(days=2), now).timestamp())
+        summary = summarise(group, window)
+        record = ActivityRecord(
+            idempotency_key=activity_key(tool, wire_session, thread_id, day, issue),
+            usage_key=anchor.idempotency_key,
+            tool=tool,
+            session_id=wire_session,
+            usage_date=day,
+            level=level,
+            categories=summary.categories,
+            thread=thread_id,
+            thread_kind="subagent" if thread is not None else "main",
+            files_changed=summary.files_changed,
+            lines_added=summary.lines_added,
+            lines_removed=summary.lines_removed,
+            subagents_spawned=summary.subagents_spawned,
+            test_runs=(summary.test_runs, summary.test_failed),
+            timeline=summary.timeline,
+            on_behalf_of=config.on_behalf_of,
+        )
+        try:
+            record.to_wire()
+        except ActivityRecordError:
+            continue
+        if report is not None:
+            report.activity_records += 1
+        out.append(record)
+    return out
+
+
+def superseded_activity(records: Sequence[ActivityRecord], state: State) -> list[ActivityRecord]:
+    """Empty summaries for activity records sent earlier that today's groups no longer have.
+
+    Like :func:`superseded_records`: when a session's issue split changes, a group sent before can be
+    left without work; it is sent again empty, so Specivo does not keep its old counts. Only groups of
+    a session and day present in *records* are looked at (a session held at ``off`` is never touched).
+    """
+    current = {r.idempotency_key for r in records}
+    days = {(r.tool, r.session_id, r.usage_date.isoformat()) for r in records}
+    out: list[ActivityRecord] = []
+    for row in state.activities(SENT):
+        if row.idempotency_key in current or (row.tool, row.session_id, row.usage_date) not in days:
+            continue
+        try:
+            day = date.fromisoformat(row.usage_date)
+        except ValueError:
+            continue
+        payload = row.payload
+        thread = payload.get("thread")
+        kind = payload.get("thread_kind")
+        behalf = payload.get("on_behalf_of")
+        out.append(
+            ActivityRecord(
+                idempotency_key=row.idempotency_key,
+                usage_key=row.usage_key,
+                tool=row.tool,
+                session_id=row.session_id,
+                usage_date=day,
+                thread=thread if isinstance(thread, str) else None,
+                thread_kind=kind if isinstance(kind, str) else None,
+                files_changed=0,
+                lines_added=0,
+                lines_removed=0,
+                subagents_spawned=0,
+                test_runs=(0, 0),
+                timeline=(),
+                on_behalf_of=behalf if isinstance(behalf, str) else None,
+            )
+        )
+    return out
 
 
 @dataclass(slots=True)
@@ -733,3 +950,149 @@ def _record(
                 wire, digest, REJECTED, error_code=outcome.error_code, error_message=outcome.error_message
             )
     return conflicts
+
+
+# -- work activity delivery ----------------------------------------------------------------------------
+
+#: Activity errors after which the record is sent again on a later push.
+ACTIVITY_RETRY_ERRORS = frozenset({"usage_not_found", "internal_error"})
+#: State meta key: whether the server took work activity at the last push (so previews show what a push sends).
+ACTIVITY_SUPPORTED_META = "activity_supported"
+
+
+def activity_known_unsupported(state: State) -> bool:
+    """Whether the last push found that the server takes no work activity."""
+    raw = state.meta(ACTIVITY_SUPPORTED_META)
+    try:
+        return raw is not None and json.loads(raw).get("supported") is False
+    except (ValueError, AttributeError):
+        return False
+
+
+@dataclass(slots=True)
+class ActivityDelivery:
+    """What happened to the work activity records of a push."""
+
+    records: int = 0
+    #: Whether the server takes work activity; ``None`` when it was not asked (nothing to send).
+    supported: bool | None = None
+    sent: int = 0
+    skipped_unchanged: int = 0
+    skipped_final: int = 0
+    #: Records held back because their usage record is not in the ledger as sent (yet).
+    waiting: int = 0
+    statuses: Counter[str] = field(default_factory=Counter)
+    errors: Counter[str] = field(default_factory=Counter)
+    warnings: Counter[str] = field(default_factory=Counter)
+    #: Why the activity could not be sent at all (the usage push is not affected).
+    error: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "records": self.records,
+            "supported": self.supported,
+            "sent": self.sent,
+            "skipped_unchanged": self.skipped_unchanged,
+            "skipped_final": self.skipped_final,
+            "waiting": self.waiting,
+            "statuses": dict(self.statuses),
+            "errors": dict(self.errors),
+            "warnings": dict(self.warnings),
+            "error": self.error,
+        }
+
+
+def anchor_sent(ledger: State) -> Callable[[str], bool]:
+    """Whether the usage record with this key is stored on the server (sent, kept after a conflict, or accepted
+    before and only waiting to be updated)."""
+
+    def check(key: str) -> bool:
+        row = ledger.bucket(key)
+        return row is not None and (row.status in (SENT, CONFLICT) or row.entry_id is not None)
+
+    return check
+
+
+def select_activity(
+    wires: Sequence[dict[str, Any]],
+    ledger: State,
+    summary: ActivityDelivery,
+    *,
+    anchored: Callable[[str], bool],
+    retry_rejected: bool = False,
+) -> list[dict[str, Any]]:
+    """The activity records a push sends: new or changed ones whose usage record is *anchored*.
+
+    ``show-payload`` and ``push --dry-run`` call this on a scratch copy of the state.
+    """
+    out: list[dict[str, Any]] = []
+    for wire in wires:
+        row = ledger.activity(wire["idempotency_key"])
+        if row is not None and row.status == SENT and row.payload_hash == payload_hash(wire):
+            summary.skipped_unchanged += 1
+            continue
+        if row is not None and row.status == REJECTED and not retry_rejected and row.payload_hash == payload_hash(wire):
+            summary.skipped_final += 1
+            continue
+        if not anchored(wire["usage_key"]):
+            summary.waiting += 1
+            continue
+        out.append(wire)
+    return out
+
+
+def deliver_activity(
+    records: Sequence[ActivityRecord], sink: Sink, state: State | None, *, retry_rejected: bool = False
+) -> ActivityDelivery:
+    """Send the work activity records after the usage push (see the module docs); never fails the push."""
+    summary = ActivityDelivery(records=len(records))
+    send = getattr(sink, "send_activity", None)
+    if not records or not callable(send):
+        return summary
+    ledger = state if (state is not None and sink.records_state) else None
+    try:
+        wires = [r.to_wire() for r in records]
+        supported = getattr(sink, "activity_supported", None)
+        summary.supported = bool(supported()) if callable(supported) else True
+        if ledger is not None:
+            memo = {"url": getattr(sink, "url", None), "supported": summary.supported}
+            ledger.set_meta(ACTIVITY_SUPPORTED_META, json.dumps(memo))
+            ledger.commit()
+        if not summary.supported:
+            return summary
+        if ledger is None:
+            to_send = wires
+        else:
+            to_send = select_activity(
+                wires, ledger, summary, anchored=anchor_sent(ledger), retry_rejected=retry_rejected
+            )
+        summary.sent = len(to_send)
+        outcomes: list[Outcome] = send(to_send) if to_send else []
+    except SinkError as exc:
+        summary.error = str(exc)
+        return summary
+    except Exception as exc:  # work activity must never break the usage push
+        summary.error = f"unexpected {type(exc).__name__}"
+        return summary
+    by_key = {w["idempotency_key"]: w for w in to_send}
+    for outcome in outcomes:
+        summary.statuses[outcome.status] += 1
+        for code in outcome.warnings:
+            summary.warnings[code] += 1
+        if outcome.error_code and not outcome.accepted:
+            summary.errors[outcome.error_code] += 1
+        wire = by_key.get(outcome.idempotency_key)
+        if ledger is None or wire is None:
+            continue
+        digest = payload_hash(wire)
+        if outcome.accepted:
+            ledger.save_activity(wire, digest, SENT)
+        elif outcome.status == PENDING or outcome.error_code in ACTIVITY_RETRY_ERRORS:
+            ledger.save_activity(wire, digest, STATE_PENDING, error_code=outcome.error_code)
+        else:
+            ledger.save_activity(
+                wire, digest, REJECTED, error_code=outcome.error_code, error_message=outcome.error_message
+            )
+    if ledger is not None:
+        ledger.commit()
+    return summary

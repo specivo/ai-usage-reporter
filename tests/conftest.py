@@ -135,3 +135,28 @@ def fixture_homes(tmp_path: Path) -> Iterator[dict[str, Path]]:
     shutil.copytree(FIXTURES / "claude_code" / "home", claude)
     shutil.copytree(FIXTURES / "codex" / "home", codex)
     yield {"claude": claude / ".claude", "codex": codex / ".codex"}
+
+
+def json_documents(text: str) -> list[Any]:
+    """Every JSON document printed one after another (show-payload prints the usage, then the activity batches)."""
+    decoder = json.JSONDecoder()
+    documents: list[Any] = []
+    index = 0
+    while True:
+        while index < len(text) and text[index].isspace():
+            index += 1
+        if index >= len(text):
+            return documents
+        document, index = decoder.raw_decode(text, index)
+        documents.append(document)
+
+
+def usage_batch(text: str) -> dict[str, Any]:
+    """The (first) usage batch of printed output."""
+    batch: dict[str, Any] = next(d for d in json_documents(text) if d.get("schema") == "specivo.ai-usage.v1")
+    return batch
+
+
+def activity_records(text: str) -> list[dict[str, Any]]:
+    """The work activity records of printed output (all activity batches)."""
+    return [r for d in json_documents(text) if d.get("schema") == "specivo.agent-activity.v1" for r in d["records"]]

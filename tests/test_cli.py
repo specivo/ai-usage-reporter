@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import json
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +10,7 @@ from ai_usage_reporter import cli
 from ai_usage_reporter import schedule as schedule_module
 from ai_usage_reporter.sinks.specivo import SpecivoSink
 from ai_usage_reporter.testing import validate_records
-from tests.conftest import FakeServer, ok, result_item
+from tests.conftest import FakeServer, ok, result_item, usage_batch
 
 CANARIES = ("CANARY-PROMPT-5c1e", "CANARY-TOOL-OUTPUT-9d07", "CANARY-PATH-7f3a", "CANARY-SECRET-b2e4")
 
@@ -51,7 +50,7 @@ def test_dry_run_prints_valid_records_and_writes_nothing(
 ) -> None:
     assert cli.main(["push", "--dry-run", "--no-git"]) == 0
     out, err = capsys.readouterr()
-    batch = json.loads(out)
+    batch = usage_batch(out)
     assert {r["tool"] for r in batch["records"]} == {"claude-code", "codex"}
     validate_records(batch["records"])
     _no_canaries(out + err)
@@ -112,7 +111,7 @@ def test_session_issue_is_captured(env: dict[str, Path], server: FakeServer, mon
 def test_show_payload(env: dict[str, Path], capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main(["show-payload", "--no-git", "--source", "codex", "--since", "2026-10-05"]) == 0
     out, _ = capsys.readouterr()
-    records = json.loads(out)["records"]
+    records = usage_batch(out)["records"]
     assert sorted(r["usage_date"] for r in records) == ["2026-10-05", "2026-10-05", "2026-10-06", "2026-10-06"]
 
 
@@ -121,7 +120,7 @@ def test_show_payload_and_dry_run_list_only_what_a_push_would_send(
 ) -> None:
     assert cli.main(["show-payload", "--no-git"]) == 0
     out, err = capsys.readouterr()
-    assert len(json.loads(out)["records"]) == 10
+    assert len(usage_batch(out)["records"]) == 10
     assert "10 records would be sent" in err
 
     assert cli.main(["push", "--no-git"]) == 0
@@ -129,15 +128,15 @@ def test_show_payload_and_dry_run_list_only_what_a_push_would_send(
     # Everything went: nothing is left to send, though every record is still collected.
     assert cli.main(["show-payload", "--no-git"]) == 0
     out, err = capsys.readouterr()
-    assert json.loads(out)["records"] == []
+    assert usage_batch(out)["records"] == []
     assert "0 records would be sent (0 from the queue); 10 unchanged since the last push" in err
     assert cli.main(["push", "--dry-run", "--no-git"]) == 0
     out, err = capsys.readouterr()
-    assert json.loads(out)["records"] == [] and "10 unchanged since the last push" in err
+    assert usage_batch(out)["records"] == [] and "10 unchanged since the last push" in err
 
     assert cli.main(["show-payload", "--no-git", "--all"]) == 0
     out, err = capsys.readouterr()
-    assert len(json.loads(out)["records"]) == 10 and "--all" in err
+    assert len(usage_batch(out)["records"]) == 10 and "--all" in err
     assert cli.main(["doctor", "--offline"]) == 0
     out, _ = capsys.readouterr()
     assert "records collected: 10; a push would send 0 (10 unchanged since the last push" in out
@@ -226,7 +225,7 @@ def test_via_ccusage_keeps_push_away_from_the_tool(env: dict[str, Path], capsys:
     )
     assert cli.main(["push", "--dry-run", "--no-git", "--source", "codex"]) == 0
     out, _ = capsys.readouterr()
-    assert json.loads(out)["records"] == []
+    assert usage_batch(out)["records"] == []
     assert cli.main(["doctor", "--offline"]) in (0, 1)
     out, _ = capsys.readouterr()
     assert "instead of their logs: codex" in out
@@ -275,4 +274,4 @@ def test_doctor_after_a_push_has_nothing_to_send(
     assert "a push would send 0 (10 unchanged since the last push" in out
     assert cli.main(["show-payload"]) == 0
     out, err = capsys.readouterr()
-    assert json.loads(out)["records"] == [] and "10 unchanged since the last push" in err
+    assert usage_batch(out)["records"] == [] and "10 unchanged since the last push" in err

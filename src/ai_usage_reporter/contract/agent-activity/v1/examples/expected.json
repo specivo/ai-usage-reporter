@@ -1,0 +1,127 @@
+{
+  "$comment": "What a Specivo server answers to each example, sent on 2026-11-06 by the account 'reporter-bot' after it sent two usage records (tool claude-code, session_id example-session, usage_date 2026-11-05): 'example-usage-anchor' for itself and 'example-usage-teammate' on behalf of 'example-teammate', who is an active member of the project that entry is attributed to. 'reporter-bot' may log AI usage, also for others, there. Invalid examples: whether the batch passes batch.schema.json, and for each record whether it passes record.schema.json and the error the server gives (code and field).",
+  "valid": {
+    "minimal.json": [
+      {
+        "status": "created",
+        "error": null
+      }
+    ],
+    "counts.json": [
+      {
+        "status": "created",
+        "error": null
+      }
+    ],
+    "names.json": [
+      {
+        "status": "created",
+        "error": null
+      }
+    ],
+    "commits.json": [
+      {
+        "status": "created",
+        "error": null
+      }
+    ],
+    "on-behalf.json": [
+      {
+        "status": "created",
+        "error": null
+      }
+    ]
+  },
+  "invalid": {
+    "level-errors.json": {
+      "schema_valid": true,
+      "records": [
+        {
+          "schema_valid": true,
+          "code": "invalid_record",
+          "field": "files"
+        },
+        {
+          "schema_valid": true,
+          "code": "invalid_record",
+          "field": "commands"
+        },
+        {
+          "schema_valid": true,
+          "code": "invalid_record",
+          "field": "agent_type"
+        },
+        {
+          "schema_valid": true,
+          "code": "invalid_record",
+          "field": "commits"
+        }
+      ]
+    },
+    "record-errors.json": {
+      "schema_valid": false,
+      "records": [
+        {
+          "schema_valid": false,
+          "code": "invalid_record",
+          "field": "categories"
+        },
+        {
+          "schema_valid": false,
+          "code": "invalid_record",
+          "field": "files.0.path"
+        },
+        {
+          "schema_valid": false,
+          "code": "invalid_record",
+          "field": "files.0.path"
+        },
+        {
+          "schema_valid": false,
+          "code": "invalid_record",
+          "field": "commands.0.name"
+        },
+        {
+          "schema_valid": true,
+          "code": "invalid_record",
+          "field": "test_runs.failed"
+        },
+        {
+          "schema_valid": true,
+          "code": "invalid_record",
+          "field": "timeline.1"
+        },
+        {
+          "schema_valid": true,
+          "code": "invalid_record",
+          "field": "timeline.0"
+        },
+        {
+          "schema_valid": true,
+          "code": "invalid_record",
+          "field": "files.1.path"
+        },
+        {
+          "schema_valid": false,
+          "code": "invalid_record",
+          "field": "commits.0.sha"
+        },
+        {
+          "schema_valid": false,
+          "code": "invalid_record",
+          "field": "level"
+        }
+      ]
+    },
+    "unsupported-schema.json": {
+      "schema_valid": false,
+      "http_status": 400,
+      "code": "unsupported_schema"
+    },
+    "empty-records.json": {
+      "schema_valid": false,
+      "http_status": 400,
+      "code": "invalid_batch"
+    }
+  }
+}

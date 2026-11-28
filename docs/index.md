@@ -374,6 +374,111 @@ the name of a collaboration tool). Never a command, an argument, an output or a 
 not give to any request (they are not sent). `active_time = false` in the config sends none of the
 three properties.
 
+## Work activity
+
+Specivo's Agents tab shows what an agent did in Specivo. The work itself (files read and edited,
+commands and tests run, subagents) happens on the agent's machine. The reporter summarises it per
+session, thread (the main conversation or a subagent), UTC day and issue segment, from the same
+pass over the transcript as [active time](#active-time), and sends each summary as a work activity
+record (contract `specivo.agent-activity.v1`) to its own endpoint, after the usage records and with
+the same API key. Specivo shows it next to the agent's Specivo steps, marked as reported by the
+reporter.
+
+What a record holds at the default level, `counts` (counts, durations and times only):
+
+| Field | Content |
+|---|---|
+| `categories` | Per category, the number of tool runs and their seconds. Categories: `read`, `search`, `edit`, `shell`, `test`, `git`, `web`, `subagent`, `mcp`, `other` |
+| `files_changed`, `lines_added`, `lines_removed` | Distinct files edited (counted on this machine by a hash of the path, which is never sent or stored), and the lines added and removed by the patches |
+| `test_runs` | Commands classified as test runs, and how many of them failed |
+| `subagents_spawned` | Subagents the thread started |
+| `timeline` | Up to 300 segments `[start, end, category]`: the active time, each part labelled with the category of the tool run covering it |
+| `thread`, `thread_kind` | A hash naming the thread (none for the main thread), and `main` or `subagent` |
+
+How it is worked out (definition version 1):
+
+- **Categories.** Claude Code: `Read` read; `Grep`, `Glob`, `ToolSearch` search; `Edit`,
+  `MultiEdit`, `Write`, `NotebookEdit` edit; `WebFetch`, `WebSearch` web; `Agent`, `Task`,
+  `SendMessage` subagent; MCP tools mcp; `Bash` by its command; anything else other. Codex:
+  commands by Codex's own parse (read, or search for searches and file listings) and otherwise by
+  the command; file changes edit; MCP calls mcp; web searches web; image views read;
+  collaboration calls subagent.
+- **Commands.** The command line is split at `;`, `&&`, `||`, `|` and `&`; environment
+  assignments and wrappers (`sudo`, `env`, `time`, `timeout`, `uv run`, `poetry run`, `npx`,
+  `python -m`, `sh -c` and the like) are skipped, and the program's name decides: `git` is
+  `git`; test runners (`pytest`, `tox`, `jest`, `vitest`, `go test`, `cargo test`, `npm test`,
+  `make test` and the like) are `test`; anything else is `shell`. A line counts once, under the
+  most specific category found (`test`, then `git`, then `shell`). The command is read in memory
+  to decide this and then dropped.
+- **Seconds.** A run counts the part of its time that is active time (up to 60 minutes, cut at
+  the end of its turn). A question to you counts nothing, nor does a wait for a subagent (the
+  subagent counts its own work); parallel runs each count their own seconds.
+- **Failures.** Claude Code's `is_error` on the result; Codex's exit code or failed status. A
+  failed test run counts in `test_runs.failed`; a failed edit changes no file.
+- **Lines.** Claude Code: the `+` and `-` lines of the edit's patch (a new file counts all its
+  lines); Codex: the same from each change's diff (an added file counts its lines).
+- **Day and issue.** A run belongs to the request that owns its start, exactly as active time
+  gives each piece of time to a request, so it lands on that request's UTC day and issue segment.
+  Each record names, in `usage_key`, the usage record of its session, day and segment with the
+  earliest request, and Specivo takes the issue, the project and who may see it from that entry.
+- **Timeline.** The active time of the group, each part labelled by the run covering it (the most
+  specific category where runs overlap); time between runs, the model working, takes the label
+  of the run before it (else after it). Neighbours with the same label are merged, a segment under
+  30 seconds that touches another is folded into the longer neighbour, and over 300 segments the
+  closest are joined.
+
+### Levels
+
+```toml
+[activity]
+level = "counts"            # off | counts | names | commits
+
+[activity.repos]            # repository patterns as in [projects]; the first match wins
+"github.com/client-x/*" = "off"
+```
+
+| Level | Sends |
+|---|---|
+| `off` | Nothing: no work activity record at all |
+| `counts` (default) | The fields above: counts, durations, line totals, the labelled timeline. No names of anything |
+| `names`, `commits` | Accepted, but not built yet: such sessions send `counts` records. A later release adds command names, repository-relative paths, MCP server names and subagent types (`names`), and commit SHAs and subjects (`commits`) |
+
+The repository is the one the usage records of the group name (`host/owner/repo`, from git or the
+tool's log); when they name several, the lowest level wins. A session whose repository is unknown
+(git enrichment off, no remote, no git) could be any of them, so it gets the lowest of the global
+level, `counts` and every level in `[activity.repos]`: one `"off"` pattern holds back every session
+without a known repository. Switching a repository to `off` stops sending its activity; what was sent before stays in
+Specivo.
+
+**Never sent at any level:** prompts, model output, file contents, diffs, command arguments,
+environment variables, absolute paths, paths outside the repository, tool output, URLs fetched,
+search queries. The record is built field by field from an allowlist; a field above the record's
+level is never built (Specivo rejects a record that has one).
+
+### Sending
+
+- Nothing is sent unless the server answers `GET /api/v1/agent-activity/ingest` (Specivo 0.16.0
+  or later): a server without it (404) gets no activity, and the usage push is not affected. The
+  default level `counts` therefore only takes effect against such a server.
+- Usage goes first, then activity, in batches under the endpoint's limits (500 records, 1 MiB).
+  A record is sent only once its usage record is in the ledger as sent, and again only when it
+  changed.
+- A record the server could not anchor yet (`usage_not_found`) or could not store
+  (`internal_error`) is sent again on the next push; one it refused (`invalid_record`) is not, until
+  it changes. When a session's issue split changes, a group sent before that no longer exists is
+  sent again empty, so Specivo does not keep its old counts.
+- `ai-usage show-payload` and `push --dry-run` print the activity records a push would send, after
+  the usage records, in their own `specivo.agent-activity.v1` envelope (with a heading on standard
+  error). `push --sink json --output usage.json` writes them to `usage.activity.json`.
+- `ai-usage doctor` shows the level, the per-repository patterns, the records per source and how
+  many groups a level of `off` left out, and whether the server takes work activity.
+
+| Tool | Work activity |
+|---|---|
+| Claude Code | Yes, main thread and subagents |
+| Codex | Yes, main thread and subagents, from rollouts written since September 2026 |
+| Gemini CLI, OpenCode, Hermes, `import ccusage` | Not yet |
+
 ## Route and provider
 
 `route` names the backend the requests went through, as the tool names it: the ChatGPT login, a
@@ -574,12 +679,19 @@ your repositories in `[projects]` to get the precise reasons.
   the agent marked with its Specivo tool calls, the project key from your mapping, cost hints,
   `on_behalf_of`, and (unless `active_time = false`) the agent's active seconds and the
   second-precision spans of when the agent was active.
+- **Sent as work activity** (level `counts`, unless `[activity] level = "off"`; only to a server that
+  takes it): per session, thread, day and issue segment, the number of tool runs and their seconds
+  by category, the number of files changed, lines added and removed, test runs and failures,
+  subagents started, a timeline of category-labelled segments, and a hashed thread id. No names of
+  anything: no command, path, file name, MCP server or commit. See [Work activity](#work-activity).
 - **Never sent, printed or logged:** prompts, responses, code, tool input and output, file paths,
   working directories, file names, remote URLs with credentials.
 - The record sent is built from an allowlist and checked field by field against the contract.
 - `ai-usage show-payload` and `push --dry-run` show exactly what a push would send now.
 - The local state database keeps the paths of the log files it read, to skip unchanged ones, and
-  the records it sent. It stays on your machine.
+  the records it sent (usage and work activity). For work activity it keeps only categories, counts
+  and hashes of edited files' paths, never a command, path, patch or output. It stays on your
+  machine.
 - `exclude_paths` in the config keeps sessions that ran in those directories out entirely.
 - For the Claude Code route, only the host of `ANTHROPIC_BASE_URL` is read from Claude Code's
   settings files and hook environment (those hold API tokens; nothing else is kept), and the
@@ -614,6 +726,8 @@ your repositories in `[projects]` to get the precise reasons.
 | `agent_log_issues` | Split long sessions by the issues the agent marked with its Specivo tool calls and send them (default `true`); see [Long sessions on several issues](#long-sessions-on-several-issues) |
 | `active_time` | Send the measured active time of each record (seconds and spans, default `true`); see [Active time](#active-time) |
 | `exclude_paths` | Sessions that ran in these directories are never reported |
+| `[activity]` | `level = "counts"` (default), `"off"`, `"names"` or `"commits"` (the last two send `counts` for now): how much work activity to send; see [Work activity](#work-activity) |
+| `[activity.repos]` | Repository pattern (as in `[projects]`) → work activity level; the first match wins. A session without a known repository gets the lowest of `level`, `counts` and every level listed here |
 | `[sources.<name>]` | `enabled = false` turns a source off; `roots = [...]` reads other directories; `via = "ccusage"` counts the tool through `import ccusage` instead of its logs; `project = "KEY"` is the tool's project when no `[projects]` repository pattern matches (for example sessions outside any git repository) |
 | `[[cost_rules]]` | `tool`, `model`, `repo`, `route`, `cwd` (patterns) → `cost_type`, `subscription_hint`, `billing_account`; the first match wins. See [Costs](#costs) |
 | `[projects]` | Repository pattern (`host/owner/repo`, `*` matches `/` too) → Specivo project key; map every repository you work in, see [Keep other work out of Specivo issues](#keep-other-work-out-of-specivo-issues) |
@@ -632,6 +746,8 @@ your repositories in `[projects]` to get the precise reasons.
 | Records refused with `key_conflict` | Another account already reported these buckets for you; use one reporter per person |
 | Usage from another repository shows up on an issue (attribution `mcp_session`) | Another agent session worked on that issue at the same time; map the repository in `[projects]` or exclude its folder (see [Keep other work out of Specivo issues](#keep-other-work-out-of-specivo-issues)), then move the entry in Specivo |
 | `push` exits with status 1 | Some records are waiting for a retry (server busy or offline); the next push sends them |
+| `work activity: the server takes none` | The server has no work activity endpoint (Specivo before 0.16.0): nothing is sent, usage is not affected |
+| Work activity `waiting for their usage record` | Their usage record was not accepted yet; they go once it is |
 | Codex rollouts are skipped | Install the `zstd` extra |
 | `doctor` says an OpenCode database is busy | OpenCode was writing; the next push reads it |
 | `Hermes schema changed, update the reporter` | Hermes changed `state.db` in a way this reporter cannot read; that database is skipped until you update the reporter (the other sources go on) |

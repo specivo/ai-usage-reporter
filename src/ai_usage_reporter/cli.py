@@ -7,7 +7,9 @@
 Nothing printed here contains a prompt, tool output, a transcript path or a
 working directory. ``show-payload`` and ``push --dry-run`` print exactly the
 records a push would send now (new or changed since the last push, then the
-queue); with ``--all``, every collected record.
+queue); with ``--all``, every collected record. The work activity records a push
+would send follow the usage records, in their own envelope
+(``specivo.agent-activity.v1``), after a heading on standard error.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from typing import Any, TextIO
 
 from ai_usage_reporter import CONTRACT_VERSION, __version__
 from ai_usage_reporter import schedule as schedules
+from ai_usage_reporter.activity_record import ACTIVITY_SCHEMA, BUILT_LEVEL, LEVELS
 from ai_usage_reporter.adapters import Registry, load_adapters
 from ai_usage_reporter.adapters._jsonl import zstd_available
 from ai_usage_reporter.apikey import KeyFileError, keyring_available, resolve_api_key, store_api_key
@@ -46,13 +49,18 @@ from ai_usage_reporter.hooks.runner import run_hook, run_hook_push
 from ai_usage_reporter.importers.ccusage import CcusageFormatError, import_report
 from ai_usage_reporter.pipeline import (
     MEASURED_DAYS,
+    ActivityDelivery,
     Collected,
     DeliverySummary,
     Selection,
+    activity_known_unsupported,
+    anchor_sent,
     collect,
     deliver,
+    deliver_activity,
     gate_like_last_push,
     native_sources,
+    select_activity,
     select_to_send,
 )
 from ai_usage_reporter.schedule import KINDS, ScheduleContext, ScheduleError, default_kind
@@ -150,7 +158,7 @@ def _print_collection(collected: Collected, out: TextIO) -> None:
             print(f"  skipped: {message}", file=out)
         for note in report.notes:
             print(f"  note: {note}", file=out)
-    print(f"{len(collected.records)} records", file=out)
+    print(f"{len(collected.records)} records, {len(collected.activity)} work activity records", file=out)
     if collected.too_old:
         print(f"{collected.too_old} buckets older than the server keeps were left out", file=out)
     if collected.invalid:
@@ -252,10 +260,16 @@ def cmd_push(args: argparse.Namespace) -> int:
         with State.scratch_copy(state_path) as scratch:
             collected = _collect(args, config, scratch, selection, store_hints=False)
             wires, preview = _would_send(collected, scratch, selection, everything=args.all)
+            activity_wires, activity_preview = _would_send_activity(collected, scratch, wires, everything=args.all)
         sink = _make_sink(args, config, cfg_path)
         sink.send(wires)
+        send_activity = getattr(sink, "send_activity", None)
+        if activity_wires and callable(send_activity):
+            _activity_heading()
+            send_activity(activity_wires)
         _print_collection(collected, sys.stderr)
         _print_preview(preview, everything=args.all)
+        _print_activity_preview(activity_preview, everything=args.all)
         return 0
     sink = _make_sink(args, config, cfg_path)
     with State(state_path) as state:
@@ -275,6 +289,8 @@ def cmd_push(args: argparse.Namespace) -> int:
             state.finish_run(run, {"error": str(exc)})
             state.commit()
             raise CliError(str(exc)) from None
+        # After the usage, so every anchor exists; never fails the push.
+        activity = deliver_activity(collected.activity, sink, state, retry_rejected=args.retry_rejected)
         sources = {
             name: {"schema_errors": report.schema_errors, "notes": report.notes}
             for name, report in collected.reports.items()
@@ -282,7 +298,13 @@ def cmd_push(args: argparse.Namespace) -> int:
         }
         state.finish_run(
             run,
-            {**summary.as_dict(), "too_old": collected.too_old, "invalid": collected.invalid, "sources": sources},
+            {
+                **summary.as_dict(),
+                "too_old": collected.too_old,
+                "invalid": collected.invalid,
+                "sources": sources,
+                "activity": activity.as_dict(),
+            },
         )
         state.commit()
     _print_collection(collected, sys.stderr)
@@ -308,7 +330,31 @@ def cmd_push(args: argparse.Namespace) -> int:
             " check the clock difference with ai-usage doctor)",
             file=sys.stderr,
         )
+    _print_activity_delivery(activity)
     return 1 if summary.statuses.get("pending") else 0
+
+
+def _print_activity_delivery(activity: ActivityDelivery) -> None:
+    if activity.error:
+        print(f"work activity: not sent ({activity.error}); it is tried again on the next push", file=sys.stderr)
+        return
+    if activity.supported is None:
+        return
+    if not activity.supported:
+        print("work activity: the server takes none; nothing was sent", file=sys.stderr)
+        return
+    statuses = ", ".join(f"{k} {v}" for k, v in sorted(activity.statuses.items())) or "nothing to send"
+    line = (
+        f"work activity: sent {activity.sent} ({statuses}); {activity.skipped_unchanged} unchanged,"
+        f" {activity.skipped_final} refused earlier"
+    )
+    if activity.waiting:
+        line += f", {activity.waiting} waiting for their usage record"
+    print(line, file=sys.stderr)
+    if activity.errors:
+        print("  errors: " + ", ".join(f"{k} {v}" for k, v in sorted(activity.errors.items())), file=sys.stderr)
+    if activity.warnings:
+        print("  warnings: " + ", ".join(f"{k} {v}" for k, v in sorted(activity.warnings.items())), file=sys.stderr)
 
 
 def cmd_show_payload(args: argparse.Namespace) -> int:
@@ -318,11 +364,67 @@ def cmd_show_payload(args: argparse.Namespace) -> int:
     with State.scratch_copy(state_path) as scratch:
         collected = _collect(args, config, scratch, selection, store_hints=False)
         wires, preview = _would_send(collected, scratch, selection, everything=args.all)
+        activity_wires, activity_preview = _would_send_activity(collected, scratch, wires, everything=args.all)
     batches = [wires[i : i + 500] for i in range(0, len(wires), 500)] or [[]]
     for batch in batches:
         print(json.dumps(make_batch(batch), indent=2, ensure_ascii=False))
+    if activity_wires:
+        _activity_heading()
+        for start in range(0, len(activity_wires), 500):
+            batch = activity_wires[start : start + 500]
+            print(json.dumps(make_batch(batch, ACTIVITY_SCHEMA), indent=2, ensure_ascii=False))
     _print_preview(preview, everything=args.all)
+    _print_activity_preview(activity_preview, everything=args.all)
     return 0
+
+
+def _activity_heading() -> None:
+    """The heading before the activity envelopes; on standard error, so standard output stays JSON."""
+    sys.stdout.flush()
+    print(
+        f"# work activity records ({ACTIVITY_SCHEMA}), sent after the usage records to a server that takes them:",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _would_send_activity(
+    collected: Collected, state: State, usage_wires: Sequence[dict[str, Any]], *, everything: bool
+) -> tuple[list[dict[str, Any]], ActivityDelivery]:
+    """The activity records a push would send now, assuming the usage records it sends are accepted."""
+    wires = [r.to_wire() for r in collected.activity]
+    summary = ActivityDelivery(records=len(wires))
+    if not everything and wires and activity_known_unsupported(state):
+        summary.supported = False
+        return [], summary
+    if not everything:
+        sending = {w["idempotency_key"] for w in usage_wires}
+        stored = anchor_sent(state)
+        wires = select_activity(wires, state, summary, anchored=lambda key: key in sending or stored(key))
+    summary.sent = len(wires)
+    return wires, summary
+
+
+def _print_activity_preview(summary: ActivityDelivery, *, everything: bool) -> None:
+    if not summary.records:
+        return
+    if everything:
+        print(f"{summary.sent} work activity records collected (--all)", file=sys.stderr)
+        return
+    if summary.supported is False:
+        print(
+            f"{summary.records} work activity records collected; the server took none at the last push,"
+            " so a push sends none (--all shows them)",
+            file=sys.stderr,
+        )
+        return
+    line = (
+        f"{summary.sent} work activity records would be sent to a server that takes them;"
+        f" {summary.skipped_unchanged} unchanged since the last push, {summary.skipped_final} refused earlier"
+    )
+    if summary.waiting:
+        line += f", {summary.waiting} waiting for their usage record"
+    print(line, file=sys.stderr)
 
 
 def _would_send(
@@ -469,6 +571,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             problems += 1
         for note in report.notes:
             print(f"  note: {note}")
+    problems += _print_activity_settings(config, collected, args)
     imported = sorted(n for n, s in config.sources.items() if s.via == "ccusage")
     if imported:
         print(f"read through 'ai-usage import ccusage' instead of their logs: {', '.join(imported)}")
@@ -481,7 +584,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(line)
     if config.url and key is not None and not args.offline:
         try:
-            info = SpecivoSink(config.url, key.value, allow_insecure_http=config.allow_insecure_http).info()
+            sink = SpecivoSink(config.url, key.value, allow_insecure_http=config.allow_insecure_http)
+            info = sink.info()
             print(f"server: accepts {', '.join(info.versions)}; up to {info.max_records} records per batch")
             if info.server_time:
                 skew = (
@@ -489,6 +593,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 ).total_seconds()
                 print(f"  clock difference: {skew:+.0f} s" + ("  (more than 10 minutes!)" if abs(skew) > 600 else ""))
                 problems += abs(skew) > 600
+            activity_info = sink.activity_info()
+            if activity_info is None:
+                print("  work activity: the server takes none (no activity endpoint); none is sent")
+            else:
+                print(f"  work activity: takes {ACTIVITY_SCHEMA} at levels {', '.join(activity_info.levels)}")
         except SinkError as exc:
             print(f"server: {exc}")
             problems += 1
@@ -503,8 +612,41 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                         " ([projects]) to get the precise reason"
                     )
             _print_problem_buckets(state, sys.stdout)
+            activity_counts = state.activity_status_counts()
+            if activity_counts:
+                print("work activity sent: " + ", ".join(f"{k} {v}" for k, v in sorted(activity_counts.items())))
+                activity_errors = state.activity_error_counts()
+                if activity_errors:
+                    print("  by error code: " + ", ".join(f"{k} {v}" for k, v in sorted(activity_errors.items())))
     print("OK" if not problems else f"{problems} problem(s) found")
     return 0 if not problems else 1
+
+
+def _print_activity_settings(config: Config, collected: Collected, args: argparse.Namespace) -> int:
+    """The work activity level, per repository pattern and per source (for doctor); returns 0 (notes only)."""
+    unknown = config.activity_level_for(None)
+    print(f"work activity: level {config.activity_level} (sessions without a known repository: {unknown})")
+    for pattern, level in config.activity_repos.items():
+        print(f"  repositories {pattern}: {level}")
+    configured = {config.activity_level, *config.activity_repos.values()}
+    higher = sorted((lv for lv in configured if LEVELS.index(lv) > LEVELS.index(BUILT_LEVEL)), key=LEVELS.index)
+    if higher:
+        print(
+            f"  note: level {', '.join(higher)} is not built yet; those sessions send {BUILT_LEVEL} records"
+            " (no names, commands, paths or commits)"
+        )
+    if config.activity_repos and (getattr(args, "no_git", False) or not config.git_enrichment):
+        print(
+            "  note: git enrichment is off, so sessions of tools that do not log their repository (Claude Code)"
+            f" have no known repository and get {unknown}"
+        )
+    for report in collected.reports.values():
+        if report.activity_records or report.activity_off:
+            print(
+                f"  {report.name}: {report.activity_records} records at {BUILT_LEVEL},"
+                f" {report.activity_off} left out (level off)"
+            )
+    return 0
 
 
 def _tilde(path: str) -> str:

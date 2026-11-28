@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://specivo.io/schemas/agent-activity/v1/info.schema.json",
+  "title": "Agent activity ingest v1: what the server accepts",
+  "description": "The HTTP 200 body of GET /api/v1/agent-activity/ingest. A server that does not answer it (404) does not take activity: send none. Clients ignore properties they do not know.",
+  "type": "object",
+  "required": [
+    "versions",
+    "max_records",
+    "max_bytes",
+    "server_time",
+    "levels",
+    "categories"
+  ],
+  "properties": {
+    "versions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Contract versions the server accepts in the batch's 'schema', newest first."
+    },
+    "max_records": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Most records in one batch."
+    },
+    "max_bytes": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Largest request body, in bytes."
+    },
+    "max_age_days": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Oldest usage_date accepted, in days before today (UTC)."
+    },
+    "rate_limit": {
+      "anyOf": [
+        {
+          "type": "object",
+          "required": [
+            "requests",
+            "window_seconds"
+          ],
+          "properties": {
+            "requests": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "window_seconds": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Batches one account may send per window; null when the server does not limit them."
+    },
+    "server_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "The server's clock, to compare with the client's."
+    },
+    "levels": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "counts",
+          "names",
+          "commits"
+        ]
+      },
+      "description": "The record levels the server accepts."
+    },
+    "categories": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "The category keys of categories and timeline."
+    },
+    "limits": {
+      "type": "object",
+      "description": "Most items per array property of a record.",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "optional_fields": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Record properties added within v1 that the server accepts; send them only when listed. Empty in the first revision."
+    }
+  }
+}

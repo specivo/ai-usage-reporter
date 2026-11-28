@@ -61,7 +61,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
-from ai_usage_reporter.model import PROMPT, TOOL_END, TOOL_START, TURN_END, ThreadEvent, UsageEvent
+from ai_usage_reporter.model import PROMPT, SPAWN, TOOL_END, TOOL_START, TURN_END, ThreadEvent, UsageEvent
 
 #: The definition the values are computed with; sent as ``active_time_version``.
 ACTIVE_TIME_VERSION = 1
@@ -118,6 +118,11 @@ def total_seconds(spans: Iterable[Span]) -> float:
     return sum(end - start for start, end in spans)
 
 
+def timed_events(events: Iterable[ThreadEvent]) -> list[ThreadEvent]:
+    """*events* without the ones that are no moment of work (a ``spawn`` note): active time never sees them."""
+    return [e for e in events if e.kind != SPAWN]
+
+
 def _ordered(events: Sequence[ThreadEvent]) -> tuple[list[ThreadEvent], list[float]]:
     # sorted() is stable: events at the same instant keep the order the adapter read them in.
     ordered = sorted(events, key=lambda e: e.timestamp)
@@ -130,7 +135,7 @@ def _boundaries(ordered: Sequence[ThreadEvent], times: Sequence[float]) -> list[
 
 def active_set(events: Sequence[ThreadEvent]) -> list[Span]:
     """The active set of one thread (definition version 1), merged and sorted."""
-    ordered, times = _ordered(events)
+    ordered, times = _ordered(timed_events(events))
     boundaries = _boundaries(ordered, times)
     starts: dict[str, int] = {}
     ends: dict[str, int] = {}
@@ -226,6 +231,7 @@ class ThreadTime:
 def attribute(events: Sequence[ThreadEvent], usage_times: Sequence[float]) -> ThreadTime:
     """The pieces of one thread's active set and the request (an index into *usage_times*) owning each."""
     result = ThreadTime()
+    events = timed_events(events)
     if not events:
         return result
     active = active_set(events)

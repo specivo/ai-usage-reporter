@@ -224,6 +224,9 @@ TOOL_START = "tool_start"
 TOOL_END = "tool_end"
 TURN_END = "turn_end"
 THREAD_EVENT_KINDS = (PROMPT, MODEL, TOOL_START, TOOL_END, TURN_END)
+#: A thread event that is no moment of work: the thread started a subagent (work activity only).
+#: Active time never sees it (see :func:`ai_usage_reporter.activity.timed_events`).
+SPAWN = "spawn"
 #: Marks a :class:`ThreadEvent` in the parse cache, next to the usage events.
 _THREAD_CACHE_TAG = "thread_event"
 
@@ -257,6 +260,17 @@ class ThreadEvent:
     subagent_wait: bool = False
     user_decided: bool = False
     key: str | None = None
+    #: Work activity detail of a tool call (see :mod:`ai_usage_reporter.work_activity`), set on either
+    #: event of the pair: the call's category (one of ``work_activity.CATEGORIES``), whether it failed,
+    #: the lines its patch added and removed, local hashes naming the files it edited (never a path),
+    #: and whether it started a subagent. Read from the tool's input and result in memory and reduced
+    #: to these values at once: no command, path, patch or output is kept.
+    category: str | None = None
+    failed: bool = False
+    lines_added: int = 0
+    lines_removed: int = 0
+    files: tuple[str, ...] = ()
+    spawns: bool = False
 
     def to_cache(self) -> dict[str, Any]:
         """A JSON-able form for the local parse cache (never sent anywhere)."""
@@ -269,6 +283,8 @@ class ThreadEvent:
     def from_cache(cls, data: Mapping[str, Any]) -> ThreadEvent:
         values = {k: v for k, v in data.items() if k in {f.name for f in fields(cls)}}
         values["timestamp"] = datetime.fromisoformat(values["timestamp"])
+        if "files" in values:
+            values["files"] = tuple(str(v) for v in values["files"] or ())
         return cls(**values)
 
 

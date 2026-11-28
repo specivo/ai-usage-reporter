@@ -80,6 +80,13 @@ class Adapter(Protocol):
       (`user_decided`). Read only timestamps, ids, the tool's name and the permission decision's
       source for this, never tool input or output. Expected seconds in the fixtures are worked out
       by hand in a comment.
+- [ ] For work activity, give the `tool_start`/`tool_end` pair of each tool call a `category`
+      (one of `ai_usage_reporter.work_activity.CATEGORIES`; shell commands through
+      `classify_command` or `classify_argv`), and on one event of the pair `failed`,
+      `lines_added`, `lines_removed`, `files` (hashes from `file_identity`) and `spawns`. Read the
+      tool's input and result in memory for this and keep nothing else of them: no command, path,
+      patch or output may enter an event. A subagent started without a tool run is a `spawn` event
+      (active time ignores it).
 - [ ] Bump `parser_version` whenever parsing changes; the reporter then parses every file of the
       adapter again.
 

@@ -15,6 +15,13 @@
   that names the target, so the configured URL can be corrected.
 - The URL must be ``https://``, except for this machine (see
   :func:`ai_usage_reporter.config.check_server_url`).
+
+**Work activity** (``specivo.agent-activity.v1``) goes to ``/api/v1/agent-activity/ingest``
+with the same API key, after the usage: :meth:`SpecivoSink.activity_supported` asks
+the server (``GET``) once; a ``404``, or an answer that does not list the version,
+means it takes none, and nothing is sent. :meth:`SpecivoSink.send_activity` splits
+the records under that endpoint's own limits and handles ``429``, ``5xx``, ``413``
+and the per-record results exactly as for usage.
 """
 
 from __future__ import annotations
@@ -31,6 +38,7 @@ from email.utils import parsedate_to_datetime
 from typing import Any
 
 from ai_usage_reporter import CONTRACT_VERSION, __version__
+from ai_usage_reporter.activity_record import ACTIVITY_SCHEMA
 from ai_usage_reporter.config import ConfigError, check_server_url
 from ai_usage_reporter.record import gate_optional_fields
 from ai_usage_reporter.sinks import PENDING, Outcome, make_batch
@@ -84,12 +92,20 @@ def urllib_transport(method: str, url: str, headers: Mapping[str, str], body: by
         return HttpResponse(exc.code, dict(exc.headers.items()) if exc.headers else {}, exc.read() or b"")
 
 
-def endpoint(url: str) -> str:
+def _server_base(url: str) -> str:
     base = url.rstrip("/")
-    for suffix in ("/api/v1/ai-usage/ingest", "/api/v1"):
+    for suffix in ("/api/v1/ai-usage/ingest", "/api/v1/agent-activity/ingest", "/api/v1"):
         if base.endswith(suffix):
             base = base[: -len(suffix)]
-    return base + "/api/v1/ai-usage/ingest"
+    return base
+
+
+def endpoint(url: str) -> str:
+    return _server_base(url) + "/api/v1/ai-usage/ingest"
+
+
+def activity_endpoint(url: str) -> str:
+    return _server_base(url) + "/api/v1/agent-activity/ingest"
 
 
 def retry_after_seconds(value: str | None, now: datetime | None = None) -> float | None:
@@ -151,6 +167,17 @@ class ServerInfo:
     optional_fields: frozenset[str] = frozenset()
 
 
+@dataclass
+class ActivityInfo:
+    """What the server's work activity endpoint accepts (its ``GET``)."""
+
+    versions: list[str]
+    max_records: int
+    max_bytes: int
+    levels: list[str]
+    categories: list[str]
+
+
 class SpecivoSink:
     name = "specivo"
     records_state = True
@@ -169,10 +196,13 @@ class SpecivoSink:
         except ConfigError as exc:
             raise SinkError(str(exc)) from None
         self.url = endpoint(url)
+        self.activity_url = activity_endpoint(url)
         self._api_key = api_key
         self.transport = transport
         self.sleep = sleep
         self._info: ServerInfo | None = None
+        self._activity_info: ActivityInfo | None = None
+        self._activity_asked = False
         self.batches_sent = 0
 
     def __repr__(self) -> str:
@@ -236,15 +266,70 @@ class SpecivoSink:
         """The record properties added within v1 that the server lists in ``optional_fields``."""
         return self.info().optional_fields
 
-    def _batches(self, records: Sequence[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-        info = self.info()
-        envelope = len(json.dumps(make_batch([])).encode())
+    def activity_info(self) -> ActivityInfo | None:
+        """What the activity endpoint accepts; ``None`` when the server takes no work activity (404)."""
+        if self._activity_asked:
+            return self._activity_info
+        try:
+            response = self.transport("GET", self.activity_url, self._headers(False), None)
+        except (OSError, urllib.error.URLError) as exc:
+            raise SinkError(f"cannot reach the server: {type(exc).__name__}") from None
+        if 300 <= response.status < 400:
+            raise redirect_error(response)
+        if response.status in (401, 403):
+            raise SinkError(f"the server refused the API key ({response.status} {_error_code(response.body)})")
+        if response.status == 404:
+            self._activity_asked = True
+            return None
+        if response.status != 200:
+            raise SinkError(f"the server answered {response.status} to GET on the activity endpoint")
+        try:
+            data = json.loads(response.body)
+        except ValueError:
+            raise SinkError("the server's answer is not JSON") from None
+        self._activity_asked = True
+        if not isinstance(data, dict):
+            return None
+        try:
+            info = ActivityInfo(
+                versions=[str(v) for v in data.get("versions") or []],
+                max_records=max(1, int(data.get("max_records") or DEFAULT_MAX_RECORDS)),
+                max_bytes=max(1, int(data.get("max_bytes") or DEFAULT_MAX_BYTES)),
+                levels=[str(v) for v in data.get("levels") or []],
+                categories=[str(v) for v in data.get("categories") or []],
+            )
+        except (TypeError, ValueError):
+            raise SinkError("the server's answer about work activity is malformed") from None
+        # A server that does not list the version (or the counts level) takes nothing of what this reporter sends.
+        self._activity_info = info if ACTIVITY_SCHEMA in info.versions and "counts" in info.levels else None
+        return self._activity_info
+
+    def activity_supported(self) -> bool:
+        return self.activity_info() is not None
+
+    def send_activity(self, records: Sequence[dict[str, Any]]) -> list[Outcome]:
+        """Send work activity records (call :meth:`activity_supported` first); one outcome each."""
+        info = self.activity_info()
+        if not records:
+            return []
+        if info is None:
+            return [Outcome(r["idempotency_key"], PENDING, "not_supported") for r in records]
+        return self._send_all(
+            self._batches(list(records), info.max_records, info.max_bytes, ACTIVITY_SCHEMA),
+            self.activity_url,
+            ACTIVITY_SCHEMA,
+        )
+
+    def _batches(
+        self, records: Sequence[dict[str, Any]], max_records: int, max_bytes: int, schema: str = CONTRACT_VERSION
+    ) -> list[list[dict[str, Any]]]:
+        envelope = len(json.dumps(make_batch([], schema)).encode())
         batches: list[list[dict[str, Any]]] = []
         current: list[dict[str, Any]] = []
         size = envelope
         for record in records:
             record_size = len(json.dumps(record, separators=(",", ":")).encode()) + 1
-            if current and (len(current) >= info.max_records or size + record_size > info.max_bytes):
+            if current and (len(current) >= max_records or size + record_size > max_bytes):
                 batches.append(current)
                 current, size = [], envelope
             current.append(record)
@@ -257,15 +342,20 @@ class SpecivoSink:
         outcomes: list[Outcome] = []
         if not records:
             return outcomes
+        info = self.info()
         accepted = self.accepted_optional_fields()
-        queue = self._batches([gate_optional_fields(r, accepted) for r in records])
+        queue = self._batches([gate_optional_fields(r, accepted) for r in records], info.max_records, info.max_bytes)
+        return self._send_all(queue, self.url, CONTRACT_VERSION)
+
+    def _send_all(self, queue: list[list[dict[str, Any]]], url: str, schema: str) -> list[Outcome]:
+        outcomes: list[Outcome] = []
         stop = False
         while queue:
             batch = queue.pop(0)
             if stop:
                 outcomes.extend(Outcome(r["idempotency_key"], PENDING, "not_sent") for r in batch)
                 continue
-            result = self._post(batch)
+            result = self._post(batch, url, schema)
             if isinstance(result, list):
                 outcomes.extend(result)
                 continue
@@ -283,13 +373,13 @@ class SpecivoSink:
                 outcomes.extend(Outcome(r["idempotency_key"], PENDING, "server_unavailable") for r in batch)
         return outcomes
 
-    def _post(self, batch: list[dict[str, Any]]) -> list[Outcome] | str:
-        body = json.dumps(make_batch(batch), separators=(",", ":"), ensure_ascii=False).encode()
+    def _post(self, batch: list[dict[str, Any]], url: str, schema: str) -> list[Outcome] | str:
+        body = json.dumps(make_batch(batch, schema), separators=(",", ":"), ensure_ascii=False).encode()
         server_errors = 0
         rate_limited = 0
         while True:
             try:
-                response = self.transport("POST", self.url, self._headers(True), body)
+                response = self.transport("POST", url, self._headers(True), body)
             except (OSError, urllib.error.URLError):
                 response = HttpResponse(0, {}, b"")
             self.batches_sent += 1

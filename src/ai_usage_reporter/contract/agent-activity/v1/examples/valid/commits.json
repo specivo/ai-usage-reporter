@@ -1,0 +1,55 @@
+{
+  "schema": "specivo.agent-activity.v1",
+  "client": {
+    "name": "ai-usage-reporter",
+    "version": "1.4.0"
+  },
+  "records": [
+    {
+      "idempotency_key": "example-activity-commits",
+      "usage_key": "example-usage-anchor",
+      "tool": "claude-code",
+      "session_id": "example-session",
+      "usage_date": "2026-11-05",
+      "level": "commits",
+      "activity_version": 1,
+      "categories": {
+        "edit": {
+          "count": 8,
+          "seconds": 60
+        },
+        "git": {
+          "count": 3,
+          "seconds": 5
+        }
+      },
+      "thread": null,
+      "files_changed": 2,
+      "lines_added": 40,
+      "lines_removed": 3,
+      "commands": [
+        {
+          "name": "git commit",
+          "count": 1,
+          "failed": 0
+        }
+      ],
+      "files": [
+        {
+          "path": "docs/guide/login.md",
+          "edits": 3,
+          "added": 40,
+          "removed": 3
+        }
+      ],
+      "commits": [
+        {
+          "sha": "32fe3796ff2245cb43d05a41280745a53a12bd54",
+          "branch": "feat/login-form",
+          "subject": "feat: remember the last login name",
+          "committed_at": "2026-11-05T10:31:00Z"
+        }
+      ]
+    }
+  ]
+}

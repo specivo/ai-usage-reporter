@@ -1,0 +1,80 @@
+{
+  "schema": "specivo.agent-activity.v1",
+  "client": {
+    "name": "ai-usage-reporter",
+    "version": "1.4.0"
+  },
+  "records": [
+    {
+      "idempotency_key": "example-activity-names",
+      "usage_key": "example-usage-anchor",
+      "tool": "claude-code",
+      "session_id": "example-session",
+      "usage_date": "2026-11-05",
+      "level": "names",
+      "activity_version": 1,
+      "categories": {
+        "read": {
+          "count": 30,
+          "seconds": 70
+        },
+        "edit": {
+          "count": 6,
+          "seconds": 45
+        },
+        "mcp": {
+          "count": 3,
+          "seconds": 4
+        },
+        "test": {
+          "count": 2,
+          "seconds": 300
+        }
+      },
+      "thread": "5f0c1a9e2b7d4c36",
+      "thread_kind": "subagent",
+      "files_changed": 3,
+      "lines_added": 88,
+      "lines_removed": 12,
+      "test_runs": {
+        "count": 2,
+        "failed": 0
+      },
+      "mcp_servers": [
+        {
+          "server": "specivo",
+          "count": 3,
+          "seconds": 4
+        }
+      ],
+      "commands": [
+        {
+          "name": "pytest",
+          "count": 2,
+          "failed": 0
+        },
+        {
+          "name": "git diff",
+          "count": 1,
+          "failed": 0
+        }
+      ],
+      "files": [
+        {
+          "path": "src/app/login.py",
+          "edits": 4,
+          "added": 70,
+          "removed": 10
+        },
+        {
+          "path": "tests/test_login.py",
+          "edits": 2,
+          "added": 18,
+          "removed": 2
+        }
+      ],
+      "files_outside": 1,
+      "agent_type": "code-reviewer"
+    }
+  ]
+}
