@@ -783,7 +783,7 @@ wheels = [
 
 [[package]]
 name = "specivo-ai-usage-reporter"
-version = "0.5.0"
+version = "0.6.0"
 source = { editable = "." }
 
 [package.optional-dependencies]

@@ -3,6 +3,28 @@
 Release notes of `specivo-ai-usage-reporter`. Install a release with
 `uv tool install git+https://github.com/specivo/ai-usage-reporter@vX.Y.Z` (or `pipx install`).
 
+## 0.6.0
+
+Active time for Codex, Codex subagents under their parent session, and a fix to `doctor`'s count.
+
+- **Active time** (Codex): rollouts written since September 2026 are measured with the same
+  definition as Claude Code. Turn starts and ends are prompts and turn ends, reasoning steps and
+  messages are model output, and commands, MCP calls, file changes, image views, extensions and
+  collaboration calls are tool runs paired by item id. A collaboration `wait` counts nothing as a
+  tool run (the subagent counts its own time), and a user-input request counts nothing. Only
+  timestamps, ids and item types are read. Older rollouts carry no active time.
+- **Codex subagents**: a subagent's rollout is a thread of its parent session (`sub_session_id`
+  is its own id, so `push --session <subagent>` selects the parent). Its usage and time take the
+  issue it marked, or the parent's issue at its start. The copy of the parent's history at the start
+  of its rollout is skipped. Before this, its usage was counted as the parent's main thread, so a
+  subagent's mark moved the parent's later usage to that issue.
+- After upgrading, the next push reads every Codex rollout again. Against a server that takes the
+  fields, it resends past records with their time, and segments whose issue split changed are
+  updated or cleared to zero.
+- Fixed: `doctor` collected without the session and git hints a push uses, so it kept counting
+  records as "would send" that a push found unchanged. `doctor`, `show-payload` and
+  `push --dry-run` now build the records exactly as a push does.
+
 ## 0.5.0
 
 Measured active time, and Codex issue marks from current rollouts.
