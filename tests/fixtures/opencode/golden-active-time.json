@@ -1,0 +1,56 @@
+[
+  {
+    "active_seconds": 801,
+    "active_spans": [
+      [
+        "2026-11-05T09:00:00Z",
+        "2026-11-05T09:12:12Z"
+      ],
+      [
+        "2026-11-05T10:12:12Z",
+        "2026-11-05T10:12:36Z"
+      ],
+      [
+        "2026-11-05T10:12:37Z",
+        "2026-11-05T10:13:00Z"
+      ],
+      [
+        "2026-11-05T10:25:00Z",
+        "2026-11-05T10:25:11Z"
+      ],
+      [
+        "2026-11-05T10:32:36Z",
+        "2026-11-05T10:32:41Z"
+      ],
+      [
+        "2026-11-05T10:40:00Z",
+        "2026-11-05T10:40:01Z"
+      ],
+      [
+        "2026-11-05T11:00:00Z",
+        "2026-11-05T11:00:05Z"
+      ]
+    ],
+    "active_time_version": 1,
+    "ended_at": "2026-11-05T11:00:01Z",
+    "idempotency_key": "f1789a4fd0587e49554279b7fc9da35075270d643a489f406518c6e7c6b10aa5",
+    "model": "claude-sonnet-4-5",
+    "provider": "anthropic",
+    "reported_cost": {
+      "amount": "0.008",
+      "currency": "USD"
+    },
+    "request_count": 8,
+    "route": "anthropic",
+    "session_id": "ses_0101rootaaaaaaaaaaaaaaaa",
+    "started_at": "2026-11-05T09:00:02Z",
+    "tokens": {
+      "cache_read": 8000,
+      "input": 800,
+      "output": 160
+    },
+    "tool": "opencode",
+    "tool_version": "2.2.5",
+    "usage_date": "2026-11-05"
+  }
+]

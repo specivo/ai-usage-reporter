@@ -80,6 +80,12 @@ class Adapter(Protocol):
       (`user_decided`). Read only timestamps, ids, the tool's name and the permission decision's
       source for this, never tool input or output. Expected seconds in the fixtures are worked out
       by hand in a comment.
+- [ ] When the log has times for prompts and model output but not for tool calls or turn ends,
+      `parse_events` may still yield `prompt` and `model` events (coarse: only the gap rule
+      applies); say so in the module docstring. When the tool keeps no time per request (running
+      totals), yield none: time must land on the request it belongs to.
+- [ ] An adapter whose thread events are for active time only (no `category` on its tool calls)
+      sets `work_activity = False`, so no work activity records are built from them.
 - [ ] For work activity, give the `tool_start`/`tool_end` pair of each tool call a `category`
       (one of `ai_usage_reporter.work_activity.CATEGORIES`; shell commands through
       `classify_command` or `classify_argv`), and on one event of the pair `failed`,

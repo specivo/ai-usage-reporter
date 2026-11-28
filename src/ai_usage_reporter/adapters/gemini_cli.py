@@ -34,6 +34,23 @@ What the data looks like, and what this adapter does with it:
   include, so it is added to ``input``.
 - A message is counted once per session and message id, across the JSON
   and JSONL copies of a session. Subagent sessions count in their parent.
+
+**Active time (coarse).** The recording keeps few times: a message's
+``timestamp`` is set once, when the CLI creates the message, and each thought
+summary of a ``gemini`` message has its own ``timestamp``. Tool calls carry no
+time at all (their results are written into the calling message later), and
+nothing marks the end of a turn. So :meth:`GeminiCliAdapter.parse_events`
+yields only ``prompt`` events (a ``user`` message that is not just a tool's
+function response) and ``model`` events (each ``gemini`` message and each of
+its thoughts), and only the definition's gap rule applies: the time between
+two of them counts when it is 10 minutes or less and no prompt ends it. A
+tool run is counted only through the gaps around it, so a tool that runs
+longer than 10 minutes counts nothing, and the generation of a turn's last
+answer after its message was created is not seen. Gemini CLI has no tool that
+waits for a person or a child in this record, so no event is flagged. A
+subagent's session is its own thread (its file), reported under the parent.
+Only the times, ids and types of messages are read for this, never their
+content. The adapter yields no work activity (its tool calls have no times).
 """
 
 from __future__ import annotations
@@ -45,7 +62,16 @@ from typing import Any
 
 from ai_usage_reporter.adapters import DiscoveryContext, HookSpec
 from ai_usage_reporter.adapters._jsonl import get_str, iter_json_lines
-from ai_usage_reporter.model import SourceFile, TokenCounts, UsageEvent, count, parse_timestamp
+from ai_usage_reporter.model import (
+    MODEL,
+    PROMPT,
+    SourceFile,
+    ThreadEvent,
+    TokenCounts,
+    UsageEvent,
+    count,
+    parse_timestamp,
+)
 
 #: Larger files are not read as one JSON document (they are JSONL anyway).
 MAX_DOCUMENT_BYTES = 256 * 1024 * 1024
@@ -80,10 +106,19 @@ def _tokens(value: object) -> TokenCounts:
     )
 
 
+def _only_function_responses(content: object) -> bool:
+    """Whether a ``user`` message's content is only tool results (not a prompt)."""
+    if not isinstance(content, list) or not content:
+        return False
+    return all(isinstance(part, dict) and "functionResponse" in part for part in content)
+
+
 class GeminiCliAdapter:
     name = "gemini-cli"
     provider = "google"
-    parser_version = "gemini-cli/1"
+    parser_version = "gemini-cli/2"
+    #: Thread events are for active time only: tool calls have no times, so there is no work activity.
+    work_activity = False
 
     def discover(self, ctx: DiscoveryContext) -> Iterable[SourceFile]:
         for tmp in gemini_dirs(ctx):
@@ -100,10 +135,49 @@ class GeminiCliAdapter:
 
     def parse(self, src: SourceFile) -> Iterator[UsageEvent]:
         header, messages = self._read(src)
+        yield from self._usage(src, header, messages)
+
+    def parse_events(self, src: SourceFile) -> Iterator[UsageEvent | ThreadEvent]:
+        """The usage events of :meth:`parse` and the coarse thread events (see the module docs)."""
+        header, messages = self._read(src)
+        yield from self._usage(src, header, messages)
+        own, session = self._ids(src, header)
+        thread = own if session != own else None
+
+        def event(when: object, kind: str, key: str) -> ThreadEvent | None:
+            moment = parse_timestamp(when)
+            if moment is None:
+                return None
+            return ThreadEvent(
+                tool=self.name, session_id=session, thread_id=thread, timestamp=moment, kind=kind, key=f"{own}|{key}"
+            )
+
+        for message_id, message in messages.items():
+            found: list[ThreadEvent | None] = []
+            if message.get("type") == "user":
+                if not _only_function_responses(message.get("content")):
+                    found.append(event(message.get("timestamp"), PROMPT, f"{message_id}|prompt"))
+            else:
+                found.append(event(message.get("timestamp"), MODEL, f"{message_id}|model"))
+                thoughts = message.get("thoughts")
+                for index, thought in enumerate(thoughts if isinstance(thoughts, list) else []):
+                    if isinstance(thought, dict):
+                        found.append(event(thought.get("timestamp"), MODEL, f"{message_id}|thought|{index}"))
+            yield from (e for e in found if e is not None)
+
+    def _ids(self, src: SourceFile, header: dict[str, Any]) -> tuple[str, str]:
+        """The file's own session id and the session it is reported under (the parent's, for a subagent)."""
         own = get_str(header, "sessionId") or src.path.name.split(".", 1)[0]
+        return own, src.session_hint or own
+
+    def _usage(
+        self, src: SourceFile, header: dict[str, Any], messages: dict[str, dict[str, Any]]
+    ) -> Iterator[UsageEvent]:
+        own, session = self._ids(src, header)
         parent = src.session_hint
-        session = parent or own
         for message in messages.values():
+            if message.get("type") != "gemini":
+                continue
             tokens = _tokens(message.get("tokens"))
             if tokens.is_zero():
                 continue
@@ -125,7 +199,7 @@ class GeminiCliAdapter:
             )
 
     def _read(self, src: SourceFile) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
-        """The session header and the ``gemini`` messages by id (the last copy of each wins)."""
+        """The session header and the ``gemini`` and ``user`` messages by id (the last copy of each wins)."""
         header: dict[str, Any] = {}
         messages: dict[str, dict[str, Any]] = {}
         document = self._document(src.path)
@@ -165,7 +239,7 @@ class GeminiCliAdapter:
         if not isinstance(items, list):
             return
         for item in items:
-            if not isinstance(item, dict) or item.get("type") != "gemini":
+            if not isinstance(item, dict) or item.get("type") not in ("gemini", "user"):
                 continue
             message_id = get_str(item, "id")
             if message_id is None:

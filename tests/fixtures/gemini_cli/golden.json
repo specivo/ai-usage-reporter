@@ -1,5 +1,13 @@
 [
   {
+    "active_seconds": 3,
+    "active_spans": [
+      [
+        "2026-10-04T10:00:00Z",
+        "2026-10-04T10:00:03Z"
+      ]
+    ],
+    "active_time_version": 1,
     "ended_at": "2026-10-04T10:00:03Z",
     "idempotency_key": "693faa69240dfc8fbd6a3e5665e7d17b7c8aa7d9b2298fcc15bbf8122f1f9ee6",
     "model": "gemini-2.5-flash",
@@ -15,6 +23,9 @@
     "usage_date": "2026-10-04"
   },
   {
+    "active_seconds": 0,
+    "active_spans": [],
+    "active_time_version": 1,
     "ended_at": "2026-10-05T09:00:05Z",
     "idempotency_key": "3286e388f7605147c4b49f797b63ee5d442e7179d5bf6788bc3c70bb3f72a2bf",
     "model": "gemini-2.5-flash",
@@ -31,6 +42,14 @@
     "usage_date": "2026-10-05"
   },
   {
+    "active_seconds": 5,
+    "active_spans": [
+      [
+        "2026-10-05T08:00:00Z",
+        "2026-10-05T08:00:05Z"
+      ]
+    ],
+    "active_time_version": 1,
     "ended_at": "2026-10-05T23:59:30Z",
     "idempotency_key": "e31ea0b6abd7adf95f5c5ddddece28168c06841497032aca13a6dd063c24606f",
     "model": "gemini-2.5-pro",
@@ -48,6 +67,14 @@
     "usage_date": "2026-10-05"
   },
   {
+    "active_seconds": 40,
+    "active_spans": [
+      [
+        "2026-10-05T23:59:30Z",
+        "2026-10-06T00:00:10Z"
+      ]
+    ],
+    "active_time_version": 1,
     "ended_at": "2026-10-06T00:00:10Z",
     "idempotency_key": "11723f2f5310a09c4deaa201472278f9ad6832227fe4f9c25b385a764109d32f",
     "model": "gemini-2.5-pro",

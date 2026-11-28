@@ -57,6 +57,19 @@ What the data looks like, and what this adapter does with it:
   row. Only the tool name, the marking arguments and that result are read (see
   :mod:`ai_usage_reporter.issue_marks`).
 
+**No active time.** This adapter yields no thread events, on purpose. The
+``messages`` table does have a time per row (``timestamp``, epoch seconds as a
+float, schema 33: ``user``, ``assistant`` with ``tool_calls`` and
+``finish_reason``, ``tool`` rows linked by ``tool_call_id``), so the events of
+the definition could be read. But the definition gives each piece of time to
+the model request it leads to, so that time lands in the same record as its
+tokens, and Hermes has no row per request: its tokens are running totals,
+reported as the growth observed at each read and dated by ``last_seen``.
+Pieces would go to whichever snapshot came next or before (often another day
+or another issue segment), and the work before the first read of a session
+would be unplaced. Measuring Hermes needs per-request token rows, or a
+definition that dates time without the owner rule.
+
 **Schema.** Hermes changes its database often. Every read checks
 ``schema_version`` and probes the columns it uses: a database older than
 :data:`MIN_SCHEMA_VERSION`, or one missing a required column, is skipped with

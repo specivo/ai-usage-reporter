@@ -13,7 +13,14 @@ from ai_usage_reporter.adapters.gemini_cli import GeminiCliAdapter
 from ai_usage_reporter.adapters.hermes import HermesAdapter
 from ai_usage_reporter.adapters.opencode import OpenCodeAdapter
 from ai_usage_reporter.testing import AdapterConformance
-from tests.fixtures import active_time_home, agent_log_home, codex_time_home, hermes_home
+from tests.fixtures import (
+    active_time_home,
+    agent_log_home,
+    codex_time_home,
+    gemini_time_home,
+    hermes_home,
+    opencode_time_home,
+)
 from tests.fixtures.opencode_home import build
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -96,6 +103,35 @@ class TestCodexActiveTimeConformance(AdapterConformance):
     fixture_home = _codex_time_home()
     golden = FIXTURES / "codex" / "golden-active-time.json"
     canaries = (*CANARIES, codex_time_home.CANARY_COMMAND, codex_time_home.CANARY_MESSAGE)
+
+
+def _gemini_time_home() -> Path:
+    """A Gemini CLI session with a subagent, for coarse active time (tests/fixtures/gemini_time_home.py)."""
+    folder = Path(tempfile.mkdtemp(prefix="gemini-time-fixture-"))
+    atexit.register(shutil.rmtree, folder, True)
+    return gemini_time_home.build(folder / "home")
+
+
+class TestGeminiCliActiveTimeConformance(AdapterConformance):
+    adapter = GeminiCliAdapter()
+    fixture_home = _gemini_time_home()
+    golden = FIXTURES / "gemini_cli" / "golden-active-time.json"
+    canaries = CANARIES
+
+
+def _opencode_time_home() -> Path:
+    """An OpenCode 2 session with a subagent, for active time (tests/fixtures/opencode_time_home.py)."""
+    folder = Path(tempfile.mkdtemp(prefix="opencode-time-fixture-"))
+    atexit.register(shutil.rmtree, folder, True)
+    opencode_time_home.build(folder / "home")
+    return folder / "home"
+
+
+class TestOpenCodeActiveTimeConformance(AdapterConformance):
+    adapter = OpenCodeAdapter()
+    fixture_home = _opencode_time_home()
+    golden = FIXTURES / "opencode" / "golden-active-time.json"
+    canaries = CANARIES
 
 
 def _hermes_home() -> Path:

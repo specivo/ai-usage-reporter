@@ -299,7 +299,9 @@ def collect(
             measured = pieces is not None or (event.tool, event.session_id) in owned.sessions
             activity.append(tuple(pieces or ()) if measured else None)
         markers.extend(m for m in adapter_markers if not _excluded(m.cwd, excluded))
-        parts.extend(_work_parts(thread_events, adapter_usage, copy_of, position, report))
+        if getattr(adapter, "work_activity", True):
+            # An adapter that yields thread events for active time only (no tool categories) says so.
+            parts.extend(_work_parts(thread_events, adapter_usage, copy_of, position, report))
     if selection.session is not None:
         wanted = selection.session
         # A record holds a session's full totals, so naming a child session (a

@@ -296,7 +296,24 @@ def test_sources_without_thread_events_never_carry_the_fields() -> None:
     home = Path(__file__).parent / "fixtures" / "gemini_cli" / "home"
     from ai_usage_reporter.adapters.gemini_cli import GeminiCliAdapter
 
-    adapter = GeminiCliAdapter()
+    class UsageOnly:
+        """An adapter without parse_events (as third-party adapters may be)."""
+
+        name, provider, parser_version = "gemini-cli", "google", "usage-only/1"
+
+        def __init__(self) -> None:
+            self._inner = GeminiCliAdapter()
+
+        def discover(self, ctx: DiscoveryContext) -> Any:
+            return self._inner.discover(ctx)
+
+        def parse(self, src: Any) -> Any:
+            return self._inner.parse(src)
+
+        def dedup_key(self, event: Any) -> Any:
+            return self._inner.dedup_key(event)
+
+    adapter = UsageOnly()
     collected = collect(
         Config(),
         Registry(adapters={adapter.name: adapter}),
