@@ -3,6 +3,30 @@
 Release notes of `specivo-ai-usage-reporter`. Install a release with
 `uv tool install git+https://github.com/specivo/ai-usage-reporter@vX.Y.Z` (or `pipx install`).
 
+## 0.8.0
+
+A local view of the measured time, and active time for OpenCode and Gemini CLI.
+
+- **`ai-usage time`** prints the measured agent time from your logs per issue, or with `--by` per
+  UTC day, session or tool, without sending anything or asking the server. Each row shows the
+  wall clock (the union of the agents' active intervals), the agent time (their sum), the sessions
+  and the records that are not measured; the total's wall clock is the union of everything.
+  `--since` (default: the last 7 days), `--until`, `--source` and `--json` (seconds). It collects
+  as a push does and reads the records a push would send, so the numbers are the ones Specivo
+  gets; with `active_time = false` it still measures and says the values would not be sent.
+- **Active time** (OpenCode): OpenCode 2 databases are measured like Claude Code and Codex, main
+  session and child sessions. Prompts, idle rows (turn ends), each message's start, streaming
+  and end, and each tool call from the moment it began to run are read; `question` counts nothing,
+  `subagent` waits for its child, and a refused call counts only through the 10 minute rule.
+  OpenCode 1 tables and the older JSON files are not measured.
+- **Active time** (Gemini CLI, coarse): the recordings have times for prompts, answers and thought
+  summaries but not for tool calls or turn ends, so only the 10 minute rule applies; a tool that
+  runs longer than 10 minutes counts nothing.
+- Hermes stays unmeasured: it keeps running token totals rather than a row per request, so time
+  could not land on the request its tokens belong to (see the adapter's notes).
+- After upgrading, the next push reads every OpenCode database and Gemini CLI recording again
+  (parser versions changed); their records gain the active time fields, tokens are unchanged.
+
 ## 0.7.0
 
 Work activity summaries: what the agent did on your machine, as counts and durations.
